@@ -2730,6 +2730,8 @@
                                                               Tag="{x:Static local:LocalUnlockOverlayPosition.BottomRight}"/>
                                                 <ComboBoxItem Content="Bottom-left"
                                                               Tag="{x:Static local:LocalUnlockOverlayPosition.BottomLeft}"/>
+                                                <ComboBoxItem Content="Bottom-center"
+                                                              Tag="{x:Static local:LocalUnlockOverlayPosition.BottomCenter}"/>
                                             </ComboBox>
                                         </DockPanel>
 
@@ -3099,6 +3101,7 @@
                                                                  <ComboBoxItem Content="Top left" Tag="{x:Static local:LocalUnlockOverlayPosition.TopLeft}"/>
                                                                  <ComboBoxItem Content="Bottom right" Tag="{x:Static local:LocalUnlockOverlayPosition.BottomRight}"/>
                                                                  <ComboBoxItem Content="Bottom left" Tag="{x:Static local:LocalUnlockOverlayPosition.BottomLeft}"/>
+                                                                 <ComboBoxItem Content="Bottom center" Tag="{x:Static local:LocalUnlockOverlayPosition.BottomCenter}"/>
                                                              </ComboBox>
                                                              <TextBlock Grid.Column="3"
                                                                         Text="Icon source:"

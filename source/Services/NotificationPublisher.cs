@@ -1114,6 +1114,10 @@ steamImage +
                     window.Left = workArea.Right - window.Width - margin;
                     window.Top = workArea.Bottom - GetOverlayWindowHeight(window) - margin - stackOffset;
                     break;
+                case LocalUnlockOverlayPosition.BottomCenter:
+                    window.Left = workArea.Left + ((workArea.Width - window.Width) / 2);
+                    window.Top = workArea.Bottom - GetOverlayWindowHeight(window) - margin - stackOffset;
+                    break;
                 default:
                     window.Left = workArea.Right - window.Width - margin;
                     window.Top = workArea.Top + margin + stackOffset;

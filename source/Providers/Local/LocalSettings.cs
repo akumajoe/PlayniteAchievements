@@ -59,7 +59,8 @@ namespace PlayniteAchievements.Providers.Local
         TopRight = 0,
         TopLeft = 1,
         BottomRight = 2,
-        BottomLeft = 3
+        BottomLeft = 3,
+        BottomCenter = 4
     }
 
     public enum LocalOverlayCoverPosition
