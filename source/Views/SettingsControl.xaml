@@ -4039,18 +4039,6 @@
                                                        Style="{StaticResource MutedTextStyle}"/>
                                         </DockPanel>
 
-                                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
-                                            <TextBlock Text="Sound lead (ms):"
-                                                       VerticalAlignment="Center"
-                                                       Margin="0,0,8,0"
-                                                       Foreground="{DynamicResource TextBrush}"
-                                                       FontWeight="SemiBold"/>
-                                            <TextBox x:Name="NotificationsUnlockSoundLeadMillisecondsTextBox"
-                                                     Width="90"
-                                                     VerticalContentAlignment="Center"
-                                                     TextChanged="NotificationsUnlockSoundLeadMillisecondsTextBox_TextChanged"
-                                                     LostFocus="NotificationsUnlockSoundLeadMillisecondsTextBox_LostFocus"/>
-                                        </DockPanel>
 
                                         <TextBlock Text="Positive values start the sound before the overlay. Negative values show the overlay first and delay the sound."
                                                    Style="{StaticResource MutedTextStyle}"

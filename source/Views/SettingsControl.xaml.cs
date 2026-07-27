@@ -1113,6 +1113,16 @@ namespace PlayniteAchievements.Views
                 NotificationsUnlockSoundLeadMillisecondsTextBox.Text = localSettings.UnlockSoundLeadMilliseconds.ToString();
             }
 
+            if (NotificationsOverlayFadeInMillisecondsTextBox != null)
+            {
+                NotificationsOverlayFadeInMillisecondsTextBox.Text = localSettings.UnlockOverlayFadeInMilliseconds.ToString();
+            }
+
+            if (NotificationsOverlayFadeOutMillisecondsTextBox != null)
+            {
+                NotificationsOverlayFadeOutMillisecondsTextBox.Text = localSettings.UnlockOverlayFadeOutMilliseconds.ToString();
+            }
+
             if (NotificationsScreenshotDelayMillisecondsTextBox != null)
             {
                 NotificationsScreenshotDelayMillisecondsTextBox.Text = localSettings.ScreenshotDelayMilliseconds.ToString();
@@ -1393,6 +1403,74 @@ namespace PlayniteAchievements.Views
             if (updateTextBox)
             {
                 NotificationsUnlockSoundLeadMillisecondsTextBox.Text = localSettings.UnlockSoundLeadMilliseconds.ToString();
+            }
+        }
+
+        private void NotificationsOverlayFadeInMillisecondsTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            ApplyNotificationsOverlayFadeInFromTextBox(updateTextBox: false);
+        }
+
+        private void NotificationsOverlayFadeInMillisecondsTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            ApplyNotificationsOverlayFadeInFromTextBox(updateTextBox: true);
+        }
+
+        private void ApplyNotificationsOverlayFadeInFromTextBox(bool updateTextBox)
+        {
+            if (NotificationsOverlayFadeInMillisecondsTextBox == null)
+            {
+                return;
+            }
+
+            var localSettings = _providerRegistry?.GetSettingsForEdit("Local") as Providers.Local.LocalSettings;
+            if (localSettings == null)
+            {
+                return;
+            }
+
+            if (int.TryParse(NotificationsOverlayFadeInMillisecondsTextBox.Text, out var value))
+            {
+                localSettings.UnlockOverlayFadeInMilliseconds = value;
+            }
+
+            if (updateTextBox)
+            {
+                NotificationsOverlayFadeInMillisecondsTextBox.Text = localSettings.UnlockOverlayFadeInMilliseconds.ToString();
+            }
+        }
+
+        private void NotificationsOverlayFadeOutMillisecondsTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            ApplyNotificationsOverlayFadeOutFromTextBox(updateTextBox: false);
+        }
+
+        private void NotificationsOverlayFadeOutMillisecondsTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            ApplyNotificationsOverlayFadeOutFromTextBox(updateTextBox: true);
+        }
+
+        private void ApplyNotificationsOverlayFadeOutFromTextBox(bool updateTextBox)
+        {
+            if (NotificationsOverlayFadeOutMillisecondsTextBox == null)
+            {
+                return;
+            }
+
+            var localSettings = _providerRegistry?.GetSettingsForEdit("Local") as Providers.Local.LocalSettings;
+            if (localSettings == null)
+            {
+                return;
+            }
+
+            if (int.TryParse(NotificationsOverlayFadeOutMillisecondsTextBox.Text, out var value))
+            {
+                localSettings.UnlockOverlayFadeOutMilliseconds = value;
+            }
+
+            if (updateTextBox)
+            {
+                NotificationsOverlayFadeOutMillisecondsTextBox.Text = localSettings.UnlockOverlayFadeOutMilliseconds.ToString();
             }
         }
 
