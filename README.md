@@ -10,6 +10,7 @@
 [![Playnite SDK](https://img.shields.io/badge/Playnite%20SDK-6.14.0-6366f1?style=for-the-badge)](https://playnite.link/)
 [![Downloads](https://img.shields.io/github/downloads/Santodan/PlayniteAchievements/total?style=for-the-badge&label=Total%20Downloads&color=10b981)](https://github.com/Santodan/PlayniteAchievements/releases)
 [![Latest Release Downloads](https://img.shields.io/github/downloads/Santodan/PlayniteAchievements/latest/total?style=for-the-badge&label=Latest%20Release%20Downloads&color=8b5cf6&cacheSeconds=3600)](https://github.com/Santodan/PlayniteAchievements/releases/latest)
+[![\Stars](https://img.shields.io/github/stars/Santodan/PlayniteAchievements?style=for-the-badge&logo=github&label=Stars&color=f59e0b)](https://github.com/Santodan/PlayniteAchievements/stargazers)
 
 </div>
 
@@ -40,6 +41,8 @@
 - Local Achievement Notification
 - `SuccessStory` Import
 - Theme and `StartPage` migration
+
+Guides available in [Achievement Notifications Guide](ACHIEVEMENT_NOTIFICATIONS_GUIDE.md) and [Local Provider Troubleshooting](LOCAL_PROVIDER_TROUBLESHOOTING.md)
 
 ## Local Provider Folder List And Browse Flow
 
@@ -96,7 +99,56 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 
 ## Next release - TBD
 
+- Fixed `RetroAchievements Game ID Override` displaying `No override set` after setting an override
+- Removed `Display Order` column since the third click feature sorts with the correct RA order
+- Restored the third click in the header to remove the column sort
+- Fixed an error in the WebView2 warm-up window
+- Fixed an issue where the `Achievement Notification` wasn't trigger any custom setting
+- Fixed the first click in the column header is always ascending, the second descending and the third removes the sort
+- Added `Opacity` setting for the `Achievement Notification`
+- Fixed `Banner opacity` changing the notification opacity
+- Fixed the defined overrides not appearing in the `Overview` tab
+
+## 2026-07-20 - v2.5.3.3
+- Trying to make the WebView notification quicker
+- Fixed a duplicate playnite window in the `ALT+TAB` menu in windows
+- Removed duplicated variables in the `Achievement Notification`
+- Moved `Sound lead` to the sound part
+- Removed the limit in the `Sound lead`, it can now accept negative values
+- Added notification for `Prestige` and `Collection` level up and tier up
+- Added wildcards to the `Save Folder` for the `Achievement Notification` screenshot
+- Fixed `Auto resize window to fit text` not working with SAN elements / transitions
+- Fixed the screenshot feature nto working with the `API Verification` for `exophase` and `RetroAchievements`
+- Fixed the `Remove current slot` size and strange characters
+- Fixed the san template remaining active when changed back to the "normal" notifications
+- Added `Corners` setting for the icons
+- Added `Preview Achievement` next to the `Preview Game`
+- Fixed the square shadow when using corners in the notification
+- Fixed the screenshot feature taking effect when enabled and the real-time notification been disabled
+- Fixed the `Provider Override` not been properly set
+- Fixed the `Clear` in the `Manage Achievement` not clearing the `Provider Override`
+- Pressing the multiple folders notification will take you to the folder selection page
+- Added a setting to have the overlay in the same monitor as the game for multiple monitors
+- Fixed the notification not showing the achievement's icon when offline
+- Guides added to the github
+
+## 2026-07-09 - v2.5.3.2
 - Fixed the multiple folders detection showing the list index instead of the folder path
+- Fixed missing `Prestige Score` and `Collection Score` when using `SteamHunters` to fetch the schema
+- Fixed `LumaPlay` refreshing without a `LumaPlay.ini` override setting been set
+- Fixed the extension trying to fetch achievement for `New Game` when pressing to add a new manual game to the library
+- Fixed freeze when `Custom Refresh` checks the authentications
+- Fixed missing providers inside the `Overrides` -> `Local` -> `Change Providers`
+- Changed the `Real-time monitoring` logs to only be generated every 10 minutes or in case of error
+- Fixed some icons missing from schemas from Steam
+- Fixed schema fetch not been done through steam when authenticated
+- Added support for achievements with a progress bar
+- Added the option to refresh the game's achievements when the real time notification is triggered
+- Fixed fullscreen themes showing `Unknown` instead of `Local` provider in the achievements
+- Added `RetroAchievement` to `Achievement Notification`
+ - It might trigger some rate-limit since it is through API
+- `Achievement notification` reimagined (`SAN-Integration` branch merged)
+  - You can see the changelog in https://github.com/Santodan/PlayniteAchievements/issues/5#issuecomment-4877909986
 
 ## 2026-06-22 - v2.5.3.1
 - v2.5.2 + v2.5.3 merge
@@ -108,6 +160,10 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 - Fixed the stuttering when using the `Game Overview` global hotkey
 - Fixed the missing tooltip menu for the `Prestige Score` and the `Collection Score`
 - Fixed the wrong placement for the level and points in `Prestige Score` and the `Collection Score`
+- Added support for achievement with progress bar
+
+## Old Changelogs
+<details>
 
 ## 2026-06-18 - v2.5.1.1
 - v2.5.1 merge
@@ -118,6 +174,7 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 - Fixed the missing right click options in the `Game Summary`
 - Fixed the locked achievements have the same icon
 - Fixed the Achievements rarity not been filled when there is no achievement file
+
 
 ## 2026-06-16 - v2.5.0.1
 - v2.5.0 merge
@@ -332,7 +389,7 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 - Added initial support for Local saves.
 - Cleaned up leftover provider debug-path behavior during the early Local provider work.
 
-
+</details>
 
 ## Upstream Docs And Credits
 

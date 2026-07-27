@@ -1,4 +1,4 @@
-﻿using Playnite.SDK;
+using Playnite.SDK;
 using Playnite.SDK.Models;
 using System;
 using System.Collections.Generic;
@@ -96,6 +96,10 @@ namespace PlayniteAchievements.Providers.Local
         private readonly Dictionary<int, string> _steamSchemaLanguageCache = new Dictionary<int, string>();
         // Maps Playnite game name to resolved Steam App ID for LumaPlay games (0 = not found / not applicable)
         private readonly Dictionary<string, int> _lumaPlaySteamAppIdCache = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan RealtimeRepeatedLogInterval = TimeSpan.FromMinutes(10);
+        private readonly object _logThrottleLock = new object();
+        private readonly Dictionary<string, DateTime> _lastRealtimeLogTimes = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+        private readonly AsyncLocal<int> _realtimeLogScopeDepth = new AsyncLocal<int>();
         private readonly object _discoveryCacheLock = new object();
         private readonly Dictionary<string, IReadOnlyList<string>> _localFolderCandidatesCache = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<int, IReadOnlyList<string>> _steamAppCacheSchemaFilePathsCache = new Dictionary<int, IReadOnlyList<string>>();
@@ -158,7 +162,52 @@ namespace PlayniteAchievements.Providers.Local
                 return;
             }
 
+            // Failures must always be recorded. Only real-time monitor refreshes throttle
+            // repeated provider messages; every other Local feature keeps normal logging.
+            if (_realtimeLogScopeDepth.Value > 0 &&
+                msg.IndexOf("ERROR", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                var now = DateTime.UtcNow;
+                lock (_logThrottleLock)
+                {
+                    if (_lastRealtimeLogTimes.TryGetValue(msg, out var lastLogTime) &&
+                        now - lastLogTime < RealtimeRepeatedLogInterval)
+                    {
+                        return;
+                    }
+
+                    _lastRealtimeLogTimes[msg] = now;
+                }
+            }
+
             _logger?.Info($"[Local] {msg}");
+        }
+
+        internal IDisposable BeginRealtimeLogThrottle()
+        {
+            _realtimeLogScopeDepth.Value++;
+            return new RealtimeLogThrottleScope(this);
+        }
+
+        private sealed class RealtimeLogThrottleScope : IDisposable
+        {
+            private LocalSavesProvider _owner;
+
+            public RealtimeLogThrottleScope(LocalSavesProvider owner)
+            {
+                _owner = owner;
+            }
+
+            public void Dispose()
+            {
+                var owner = Interlocked.Exchange(ref _owner, null);
+                if (owner != null)
+                {
+                    owner._realtimeLogScopeDepth.Value = Math.Max(
+                        0,
+                        owner._realtimeLogScopeDepth.Value - 1);
+                }
+            }
         }
 
         private readonly SteamApiTokenService _steamApiTokenService;
@@ -176,12 +225,22 @@ namespace PlayniteAchievements.Providers.Local
         {
             if (!TryResolveAppId(game, out var appId, out _ ) || appId <= 0)
             {
-                if (TryAutoDetectLumaPlayAppId(game, out var autoDetectedAppId, out var autoDetectedIniPath) && autoDetectedAppId > 0)
+                // Explicit Local configuration is sufficient capability and should not trigger
+                // install-directory discovery while Custom Refresh is building its game list.
+                if (SupportsSchemaOnlyManualFallback(game))
                 {
-                    appId = autoDetectedAppId;
-                    Log($"LUMAPLAY AUTO-DETECT: game='{game?.Name}' appId={appId} source={autoDetectedIniPath}");
+                    return true;
                 }
-                else if (TryAutoDetectTenokeAppId(game, out var autoDetectedTenokeAppId, out var autoDetectedTenokeIniPath) && autoDetectedTenokeAppId > 0)
+
+                // Games owned by another library plugin (Epic, GOG, etc.) commonly have
+                // non-numeric IDs. They are not Local candidates unless explicitly configured.
+                // Avoid recursively probing every such game's install directory on the UI path.
+                if (game == null || game.PluginId != Guid.Empty)
+                {
+                    return false;
+                }
+
+                if (TryAutoDetectTenokeAppId(game, out var autoDetectedTenokeAppId, out var autoDetectedTenokeIniPath) && autoDetectedTenokeAppId > 0)
                 {
                     appId = autoDetectedTenokeAppId;
                     Log($"TENOKE AUTO-DETECT: game='{game?.Name}' appId={appId} source={autoDetectedTenokeIniPath}");
@@ -199,15 +258,6 @@ namespace PlayniteAchievements.Providers.Local
                         Log($"LUMAPLAY CAPABILITY: game='{game?.Name}' iniOverrideMissing='{lumaIniOverridePath}'");
                     }
 
-                    // Keep capability when explicit Local/manual fallback context exists
-                    // so refresh can proceed and produce richer diagnostics.
-                    if (SupportsSchemaOnlyManualFallback(game))
-                    {
-                        Log($"LUMAPLAY CAPABILITY: game='{game?.Name}' using schema-only/manual fallback without resolved app id.");
-                        return true;
-                    }
-
-                    Log($"LUMAPLAY CAPABILITY: game='{game?.Name}' not capable (no app id, no auto-detect, no valid ini override).");
                     return false;
                 }
             }
@@ -238,7 +288,9 @@ namespace PlayniteAchievements.Providers.Local
                 return true;
             }
 
-            if (IsWindowsPlatform() && TryGetLumaPlayRegistryEntries(appIdText)?.Count > 0)
+            if (IsWindowsPlatform() &&
+                TryGetConfiguredLumaPlayAppId(game, out var configuredLumaAppId, out _) &&
+                TryGetLumaPlayRegistryEntries(configuredLumaAppId.ToString(CultureInfo.InvariantCulture))?.Count > 0)
             {
                 return true;
             }
@@ -274,26 +326,6 @@ namespace PlayniteAchievements.Providers.Local
 
                 if (string.IsNullOrEmpty(appId) &&
                     game != null &&
-                    TryGetFolderOverride(game.Id, out var overriddenFolderPath) &&
-                    TryFindLumaPlayIniPathFromFolder(overriddenFolderPath, out var discoveredLumaPlayIniPath) &&
-                    TryExtractUplayGameIdFromLumaPlayIni(discoveredLumaPlayIniPath, out appIdFromLumaPlayIni))
-                {
-                    appId = appIdFromLumaPlayIni.ToString(CultureInfo.InvariantCulture);
-                    isAppIdOverridden = true;
-                    Log($"LUMAPLAY APPID INFERRED: game='{game?.Name}' appId={appId} source={discoveredLumaPlayIniPath}");
-                }
-
-                if (string.IsNullOrEmpty(appId) &&
-                    TryAutoDetectLumaPlayAppId(game, out var autoDetectedAppId, out var autoDetectedIniPath) &&
-                    autoDetectedAppId > 0)
-                {
-                    appId = autoDetectedAppId.ToString(CultureInfo.InvariantCulture);
-                    isAppIdOverridden = true;
-                    Log($"LUMAPLAY APPID AUTO-DETECTED: game='{game?.Name}' appId={appId} source={autoDetectedIniPath}");
-                }
-
-                if (string.IsNullOrEmpty(appId) &&
-                    game != null &&
                     TryGetFolderOverride(game.Id, out var tenokeOverrideFolderPath) &&
                     TryFindTenokeIniPathFromFolder(tenokeOverrideFolderPath, out var discoveredTenokeIniPath) &&
                     TryExtractAppIdFromTenokeIni(discoveredTenokeIniPath, out var appIdFromTenokeIni))
@@ -325,11 +357,11 @@ namespace PlayniteAchievements.Providers.Local
             {
                 if (!hasEnabledCustomSchemaOverride && !hasFolderOverride && !SupportsSchemaOnlyManualFallback(game))
                 {
-                    Log($"LUMAPLAY APPID RESOLUTION: game='{game?.Name}' failed (no app id from metadata/override/ini/auto-detect).");
+                    Log($"LOCAL APPID RESOLUTION: game='{game?.Name}' failed (no app id from metadata or configured overrides).");
                     return null;
                 }
 
-                Log($"LUMAPLAY APPID RESOLUTION: game='{game?.Name}' failed, continuing with override-only/schema-only mode (customSchema={hasEnabledCustomSchemaOverride}, folderOverride={hasFolderOverride}, schemaFallback={SupportsSchemaOnlyManualFallback(game)}).");
+                Log($"LOCAL APPID RESOLUTION: game='{game?.Name}' failed, continuing with override-only/schema-only mode (customSchema={hasEnabledCustomSchemaOverride}, folderOverride={hasFolderOverride}, schemaFallback={SupportsSchemaOnlyManualFallback(game)}).");
             }
 
             string localFolderPath = null;
@@ -356,21 +388,19 @@ namespace PlayniteAchievements.Providers.Local
             }
 
             Dictionary<string, LocalEntry> lumaRegistryEntries = null;
-            if (IsWindowsPlatform() && string.IsNullOrWhiteSpace(jsonPath) && iniPaths.Count == 0)
+            var hasValidLumaPlayIniOverride = TryGetConfiguredLumaPlayAppId(game, out var configuredLumaPlayAppId, out _);
+            if (IsWindowsPlatform() &&
+                hasValidLumaPlayIniOverride &&
+                string.IsNullOrWhiteSpace(jsonPath) &&
+                iniPaths.Count == 0)
             {
-                lumaRegistryEntries = TryGetLumaPlayRegistryEntries(appId);
+                lumaRegistryEntries = TryGetLumaPlayRegistryEntries(
+                    configuredLumaPlayAppId.ToString(CultureInfo.InvariantCulture));
             }
 
             var hasAchievementsFile = !string.IsNullOrWhiteSpace(jsonPath) || iniPaths.Count > 0;
             var hasLumaRegistryEntries = lumaRegistryEntries != null && lumaRegistryEntries.Count > 0;
-            var hasLumaPlayAppIdOverride = game != null && TryGetLumaPlayAppIdOverride(game.Id, out _);
-            var hasLumaPlayIniOverride = game != null && TryGetLumaPlayIniPathOverride(game.Id, out _);
-            var hasAutoDetectedLumaPlayIni = game != null &&
-                TryAutoDetectLumaPlayAppId(game, out _, out _);
-            var isLumaPlayContext = hasLumaRegistryEntries ||
-                hasLumaPlayAppIdOverride ||
-                hasLumaPlayIniOverride ||
-                hasAutoDetectedLumaPlayIni;
+            var isLumaPlayContext = hasValidLumaPlayIniOverride;
             var preferLocalizedSchemaText = ShouldPreferLocalizedSteamText();
 
             SchemaAndPercentages steamSchema = null;
@@ -741,13 +771,7 @@ namespace PlayniteAchievements.Providers.Local
                 }
                 else if (TryGetFolderOverride(game.Id, out var overriddenFolderPath))
                 {
-                    if (TryFindLumaPlayIniPathFromFolder(overriddenFolderPath, out var lumaPath) &&
-                        TryExtractUplayGameIdFromLumaPlayIni(lumaPath, out lumaAppId))
-                    {
-                        appId = lumaAppId.ToString(CultureInfo.InvariantCulture);
-                        AddExistingPath(paths, lumaPath);
-                    }
-                    else if (TryFindTenokeIniPathFromFolder(overriddenFolderPath, out var tenokePath) &&
+                    if (TryFindTenokeIniPathFromFolder(overriddenFolderPath, out var tenokePath) &&
                              TryExtractAppIdFromTenokeIni(tenokePath, out var tenokeAppId))
                     {
                         appId = tenokeAppId.ToString(CultureInfo.InvariantCulture);
@@ -1291,13 +1315,6 @@ namespace PlayniteAchievements.Providers.Local
                 return true;
             }
 
-            if (TryGetLumaPlayAppIdOverride(game.Id, out var overriddenLumaPlayAppId))
-            {
-                appId = overriddenLumaPlayAppId;
-                isOverridden = true;
-                return true;
-            }
-
             if (TryGetLumaPlayIniPathOverride(game.Id, out var overriddenLumaPlayIniPath) &&
                 TryExtractUplayGameIdFromLumaPlayIni(overriddenLumaPlayIniPath, out var lumaPlayIniAppId))
             {
@@ -1396,6 +1413,15 @@ namespace PlayniteAchievements.Providers.Local
             }
 
             return false;
+        }
+
+        private static bool TryGetConfiguredLumaPlayAppId(Game game, out int appId, out string iniPath)
+        {
+            appId = 0;
+            iniPath = null;
+            return game != null &&
+                TryGetLumaPlayIniPathOverride(game.Id, out iniPath) &&
+                TryExtractUplayGameIdFromLumaPlayIni(iniPath, out appId);
         }
 
         private bool TryAutoDetectLumaPlayAppId(Game game, out int appId, out string detectedIniPath)
@@ -1800,11 +1826,11 @@ namespace PlayniteAchievements.Providers.Local
 
                     if (resolvedId > 0)
                     {
-                        Log($"LUMA STEAM SEARCH: game='{gameName}' normalized='{normalizedQuery}' query='{bestQuery}' steamAppId={resolvedId} score={bestScore:F2}");
+                        Log($"STEAM SCHEMA SEARCH: game='{gameName}' normalized='{normalizedQuery}' query='{bestQuery}' steamAppId={resolvedId} score={bestScore:F2}");
                     }
                     else
                     {
-                        Log($"LUMA STEAM SEARCH: game='{gameName}' no confident Steam match (bestScore={bestScore:F2})");
+                        Log($"STEAM SCHEMA SEARCH: game='{gameName}' no confident Steam match (bestScore={bestScore:F2})");
                     }
 
                     return resolvedId;
@@ -1985,8 +2011,7 @@ namespace PlayniteAchievements.Providers.Local
             if (TryGetAppIdOverride(game.Id, out _) ||
                 TryGetFolderOverride(game.Id, out _) ||
                 (TryGetCustomSchemaPathOverride(game.Id, out _) && TryGetCustomSchemaEnabledOverride(game.Id, out var isCustomSchemaEnabledForFallback) && isCustomSchemaEnabledForFallback) ||
-                TryGetLumaPlayAppIdOverride(game.Id, out _) ||
-                TryGetLumaPlayIniPathOverride(game.Id, out _))
+                TryGetConfiguredLumaPlayAppId(game, out _, out _))
             {
                 return true;
             }
@@ -2018,9 +2043,9 @@ namespace PlayniteAchievements.Providers.Local
                 return true;
             }
 
-            // Manual/library-less Playnite games may not have a Steam app id yet.
-            // Allow a schema-only refresh to resolve Steam schema by game name.
-            return !string.IsNullOrWhiteSpace(game.Name);
+            // A name alone is not Local-provider configuration. In particular, Playnite creates
+            // a temporary library-less "New Game" record when the manual-game editor opens.
+            return false;
         }
 
         private Dictionary<string, LocalEntry> TryGetSteamAppCacheEntries(int appId, Game game = null)
@@ -3692,7 +3717,7 @@ namespace PlayniteAchievements.Providers.Local
                 return null;
             }
 
-            return $"https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/{appId}/{iconHash}";
+            return $"https://shared.fastly.steamstatic.com/community_assets/images/apps/{appId}/{iconHash}";
         }
 
         private string GetSelectedSteamAppCacheUserId(Game game = null)
@@ -4674,21 +4699,27 @@ namespace PlayniteAchievements.Providers.Local
                 HasSourceLockedIcon = hasSourceLockedIcon,
                 Unlocked = entry.earned,
                 Hidden = entry.hidden || (schemaAch?.Hidden == 1),
+                Points = schemaAch?.Points,
+                ProgressNum = NormalizeAchievementProgress(entry.progress, entry.max_progress),
+                ProgressDenom = NormalizeAchievementProgressMaximum(entry.max_progress),
                 UnlockTimeUtc = entry.earned && entry.earned_time > 0
                     ? DateTimeOffset.FromUnixTimeSeconds(entry.earned_time).UtcDateTime
                     : (DateTime?)null
             };
 
-            double? globalPercent = entry.percent;
+            // Online schema percentages are the authoritative global Steam rarity.
+            // Local formats frequently persist zero, stale, or player-specific values,
+            // which previously prevented anonymous SteamHunters rarity from applying.
+            double? globalPercent = schemaAch?.GlobalPercent;
             if (!globalPercent.HasValue)
             {
-                if (schemaAch?.GlobalPercent.HasValue == true)
-                {
-                    globalPercent = schemaAch.GlobalPercent.Value;
-                }
-                else if (steamSchema?.GlobalPercentages?.TryGetValue(apiName, out var resolvedPercent) == true)
+                if (steamSchema?.GlobalPercentages?.TryGetValue(apiName, out var resolvedPercent) == true)
                 {
                     globalPercent = resolvedPercent;
+                }
+                else
+                {
+                    globalPercent = entry.percent;
                 }
             }
 
@@ -5406,6 +5437,11 @@ namespace PlayniteAchievements.Providers.Local
                 if (!target.GlobalPercent.HasValue && source.GlobalPercent.HasValue)
                 {
                     target.GlobalPercent = source.GlobalPercent;
+                }
+
+                if (!target.Points.HasValue && source.Points.HasValue)
+                {
+                    target.Points = source.Points;
                 }
             }
         }
@@ -6495,7 +6531,35 @@ namespace PlayniteAchievements.Providers.Local
                 existing.percent = incoming.percent;
             }
 
+            if (!existing.progress.HasValue && incoming.progress.HasValue)
+            {
+                existing.progress = incoming.progress;
+            }
+
+            if (!existing.max_progress.HasValue && incoming.max_progress.HasValue)
+            {
+                existing.max_progress = incoming.max_progress;
+            }
+
             return existing;
+        }
+
+        private static int? NormalizeAchievementProgressMaximum(int? maximum)
+        {
+            return maximum.HasValue && maximum.Value > 0
+                ? maximum
+                : null;
+        }
+
+        private static int? NormalizeAchievementProgress(int? progress, int? maximum)
+        {
+            var normalizedMaximum = NormalizeAchievementProgressMaximum(maximum);
+            if (!progress.HasValue || !normalizedMaximum.HasValue)
+            {
+                return null;
+            }
+
+            return Math.Min(Math.Max(progress.Value, 0), normalizedMaximum.Value);
         }
 
         private static IEnumerable<string> BuildLumaPlayAppIdCandidates(string appId)
@@ -7535,7 +7599,8 @@ namespace PlayniteAchievements.Providers.Local
                 _api?.Notifications?.Add(new NotificationMessage(
                     $"PlayAch-LocalFolderAmbiguous-{game.Id}",
                     $"{ResourceProvider.GetString("LOCPlayAch_Title_PluginName")}\n{message}",
-                    NotificationType.Info));
+                    NotificationType.Info,
+                    () => PlayniteAchievementsPlugin.Instance?.OpenManageAchievementsLocalFolderOverrideView(game.Id)));
             }
             catch (Exception ex)
             {
@@ -8128,6 +8193,8 @@ namespace PlayniteAchievements.Providers.Local
                 _steamSchemaLanguageCache.Remove(appId);
             }
 
+            SchemaAndPercentages cachedFallback = null;
+            string cachedFallbackSource = null;
             if (_steamSchemaCache.TryGetValue(appId, out var cached) && cached != null)
             {
                 var cachedSource = _steamSchemaSourceCache.TryGetValue(appId, out var source) ? source : null;
@@ -8135,19 +8202,24 @@ namespace PlayniteAchievements.Providers.Local
                 if (IsSchemaSourceCompatibleWithPreference(cachedSource, schemaPreference) &&
                     string.Equals(cachedLanguage, schemaLanguage, StringComparison.OrdinalIgnoreCase))
                 {
-                    return cached;
-                }
+                    if (string.Equals(cachedSource, "steam-web-api", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return cached;
+                    }
 
-                RemoveCachedSchema();
+                    // Keep an anonymous/local result available, but first give an authenticated
+                    // Steam session a chance to replace it with the authoritative Web API schema.
+                    cachedFallback = cached;
+                    cachedFallbackSource = cachedSource;
+                }
+                else
+                {
+                    RemoveCachedSchema();
+                }
             }
 
-            var steamSettings = ProviderRegistry.Settings<SteamSettings>();
-
-            async Task<SchemaAndPercentages> TryPreferredAnonymousSchemaAsync()
+            async Task<SchemaAndPercentages> TryAuthenticatedSteamSchemaAsync()
             {
-                // If a Steam API token is available (session or manual key), use the official
-                // Steam Web API, it returns fully localized text for ALL achievements including
-                // hidden ones, in the requested language.
                 if (_steamApiTokenService != null)
                 {
                     try
@@ -8173,6 +8245,24 @@ namespace PlayniteAchievements.Providers.Local
                     }
                 }
 
+                return null;
+            }
+
+            var authenticatedSteamSchema = await TryAuthenticatedSteamSchemaAsync().ConfigureAwait(false);
+            if (authenticatedSteamSchema?.Achievements?.Count > 0)
+            {
+                CacheSchema(authenticatedSteamSchema, "steam-web-api");
+                return authenticatedSteamSchema;
+            }
+
+            if (cachedFallback != null)
+            {
+                CacheSchema(cachedFallback, cachedFallbackSource);
+                return cachedFallback;
+            }
+
+            async Task<SchemaAndPercentages> TryPreferredAnonymousSchemaAsync()
+            {
                 // Get base schema for correlation with local entries
                 SchemaAndPercentages baseSchema = null;
                 switch (schemaPreference)
@@ -8321,6 +8411,13 @@ namespace PlayniteAchievements.Providers.Local
             if (string.IsNullOrWhiteSpace(source))
             {
                 return false;
+            }
+
+            // An authenticated Steam Web API schema is authoritative regardless of which
+            // anonymous fallback the user selected.
+            if (string.Equals(source, "steam-web-api", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
             }
 
             switch (preference)
@@ -9111,6 +9208,7 @@ namespace PlayniteAchievements.Providers.Local
             }
 
             var steamPercentage = item["steamPercentage"]?.Value<double?>() ?? item["estimatedSteamPercentage"]?.Value<double?>();
+            var points = item["points"]?.Value<int?>();
             if (steamPercentage.HasValue && !double.IsNaN(steamPercentage.Value) && !double.IsInfinity(steamPercentage.Value))
             {
                 percentages[apiName] = steamPercentage.Value;
@@ -9124,7 +9222,8 @@ namespace PlayniteAchievements.Providers.Local
                 Icon = ResolveSteamHuntersIcon(appId, item["icon"]?.Value<string>()),
                 IconGray = ResolveSteamHuntersIcon(appId, item["iconGray"]?.Value<string>()),
                 Hidden = item["hidden"]?.Value<bool?>() == true ? 1 : 0,
-                GlobalPercent = steamPercentage
+                GlobalPercent = steamPercentage,
+                Points = points
             };
         }
 
@@ -9953,6 +10052,11 @@ namespace PlayniteAchievements.Providers.Local
 
             public bool hidden { get; set; }
             public double? percent { get; set; }
+
+            public int? progress { get; set; }
+
+            [JsonProperty("max_progress")]
+            public int? max_progress { get; set; }
         }
 
         private sealed class IniSectionInfo

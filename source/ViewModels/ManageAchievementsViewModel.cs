@@ -221,6 +221,7 @@ namespace PlayniteAchievements.ViewModels
                     _achievementOverridesService?.SetSeparateLockedIconOverride(_gameId, value);
                     RefreshCustomDataState();
                     OnPropertyChanged(nameof(SeparateLockedIconsStatusText));
+                    RefreshOverviewOverrides();
                 }
             }
         }
@@ -288,6 +289,7 @@ namespace PlayniteAchievements.ViewModels
                 {
                     OnPropertyChanged(nameof(ProviderOverrideStatusText));
                     OnPropertyChanged(nameof(ProviderOverrideSummaryText));
+                    OnPropertyChanged(nameof(HasProviderOverrideSummary));
                     RaiseCommandStates();
                 }
             }
@@ -336,7 +338,17 @@ namespace PlayniteAchievements.ViewModels
             }
         }
 
-        public string ProviderOverrideSummaryText => ProviderOverrideStatusText;
+        public string ProviderOverrideSummaryText
+        {
+            get
+            {
+                return HasProviderOverride
+                    ? GetProviderOverrideDisplayName(_providerOverrideKey)
+                    : string.Empty;
+            }
+        }
+
+        public bool HasProviderOverrideSummary => HasProviderOverride;
 
         public bool HasGame
         {
@@ -978,7 +990,10 @@ namespace PlayniteAchievements.ViewModels
             }
 
             var store = _plugin?.GameCustomDataStore;
-            if (store == null || !store.TryLoad(_gameId, out var currentData) || currentData == null)
+            GameCustomDataFile currentData = null;
+            var hasStoredData = store != null && store.TryLoad(_gameId, out currentData) && currentData != null;
+            var hasPreferredProviderOverride = _achievementOverridesService?.HasPreferredProviderOverride(_gameId) == true;
+            if (!hasStoredData && !hasPreferredProviderOverride)
             {
                 return;
             }
@@ -1000,9 +1015,26 @@ namespace PlayniteAchievements.ViewModels
 
             try
             {
-                store.Delete(_gameId);
+                if (hasStoredData)
+                {
+                    store.Delete(_gameId);
+                }
+
+                if (hasPreferredProviderOverride)
+                {
+                    var clearResult = _achievementOverridesService.ClearPreferredProviderOverride(_gameId);
+                    if (clearResult?.Success != true)
+                    {
+                        throw new InvalidOperationException(
+                            clearResult?.ErrorMessage ??
+                            L("LOCPlayAch_Menu_LocalProvider_ClearFailed", "The preferred provider override could not be cleared."));
+                    }
+                }
+
                 var transitionEffects = AnalyzeCustomDataTransition(currentData, null);
-                NotifyCustomDataChanged(transitionEffects.RequiresRefresh, transitionEffects.ForceIconRefresh);
+                NotifyCustomDataChanged(
+                    transitionEffects.RequiresRefresh || hasPreferredProviderOverride,
+                    transitionEffects.ForceIconRefresh);
 
                 _playniteApi?.Dialogs?.ShowMessage(
                     L("LOCPlayAch_Status_Succeeded", "Success!"),
@@ -1185,8 +1217,14 @@ namespace PlayniteAchievements.ViewModels
 
             try
             {
-                if (_achievementOverridesService != null)
+                var game = _playniteApi?.Database?.Games?.Get(_gameId);
+                if (_plugin != null && game != null)
                 {
+                    _plugin.ClearGameDataAndOverrides(game);
+                }
+                else if (_achievementOverridesService != null)
+                {
+                    _achievementOverridesService.ClearPreferredProviderOverride(_gameId);
                     _achievementOverridesService.ClearGameData(_gameId, GameName);
                 }
                 else
@@ -1239,7 +1277,9 @@ namespace PlayniteAchievements.ViewModels
             var store = _plugin?.GameCustomDataStore;
             GameCustomDataFile currentData = null;
             var hasStoredData = HasGame && store != null && store.TryLoad(_gameId, out currentData) && currentData != null;
-            CanClearCustomData = hasStoredData;
+            var hasPreferredProviderOverride =
+                HasGame && _achievementOverridesService?.HasPreferredProviderOverride(_gameId) == true;
+            CanClearCustomData = hasStoredData || hasPreferredProviderOverride;
             CanExportCustomJson = hasStoredData && GameCustomDataNormalizer.HasPortableData(currentData);
         }
 

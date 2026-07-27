@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,6 +21,7 @@ namespace PlayniteAchievements.Services.Local
         private readonly LocalAchievementScreenshotService _screenshotService;
         private readonly Func<Guid, bool> _isRealtimeNotificationDisabled;
         private readonly Func<Guid, bool> _isExcludedFromRefreshes;
+        private readonly Func<Game, CancellationToken, Task> _refreshGameInExtensionAsync;
         private readonly ILogger _logger;
 
         private readonly object _sync = new object();
@@ -38,6 +40,7 @@ namespace PlayniteAchievements.Services.Local
             LocalAchievementScreenshotService screenshotService,
             Func<Guid, bool> isRealtimeNotificationDisabled,
             Func<Guid, bool> isExcludedFromRefreshes,
+            Func<Game, CancellationToken, Task> refreshGameInExtensionAsync,
             ILogger logger)
         {
             _cacheManager = cacheManager ?? throw new ArgumentNullException(nameof(cacheManager));
@@ -46,6 +49,7 @@ namespace PlayniteAchievements.Services.Local
             _screenshotService = screenshotService ?? throw new ArgumentNullException(nameof(screenshotService));
             _isRealtimeNotificationDisabled = isRealtimeNotificationDisabled;
             _isExcludedFromRefreshes = isExcludedFromRefreshes;
+            _refreshGameInExtensionAsync = refreshGameInExtensionAsync;
             _logger = logger;
         }
 
@@ -168,9 +172,9 @@ namespace PlayniteAchievements.Services.Local
                         unlockNotifications,
                         soundPath,
                         game: game);
+                    _ = _screenshotService.TryCaptureUnlockScreenshotsAsync(game, unlockNames, cancellationToken);
                 }
-
-                _ = _screenshotService.TryCaptureUnlockScreenshotsAsync(game, unlockNames, cancellationToken);
+                QueueRefreshGameInExtensionAfterUnlock(game);
 
                 lock (_sync)
                 {
@@ -271,7 +275,6 @@ namespace PlayniteAchievements.Services.Local
 
                         _logger?.Info($"Detected {newlyUnlocked.Count} newly unlocked Local achievement(s) for '{game.Name}'.");
 
-                        _ = _screenshotService.TryCaptureUnlockScreenshotsAsync(game, unlockNames, cancellationToken);
                         if (_isRealtimeNotificationDisabled?.Invoke(game.Id) == true)
                         {
                             _logger?.Info($"Skipped Local unlock notification for '{game.Name}' because real-time notifications are disabled for this game.");
@@ -283,7 +286,10 @@ namespace PlayniteAchievements.Services.Local
                                 unlockNotifications,
                                 soundPath,
                                 game: game);
+                            _ = _screenshotService.TryCaptureUnlockScreenshotsAsync(game, unlockNames, cancellationToken);
                         }
+
+                        QueueRefreshGameInExtensionAfterUnlock(game);
                     }
                     else if (previousSnapshot == null && currentSnapshot != null)
                     {
@@ -332,6 +338,12 @@ namespace PlayniteAchievements.Services.Local
                 return false;
             }
 
+            if (_isRealtimeNotificationDisabled?.Invoke(game.Id) == true)
+            {
+                _logger?.Info($"Skipping active Local achievement monitor for '{game.Name}' because real-time notifications are disabled for this game.");
+                return false;
+            }
+
             return true;
         }
 
@@ -375,7 +387,12 @@ namespace PlayniteAchievements.Services.Local
                 return cachedBefore;
             }
 
-            var data = await localProvider.GetAchievementsAsync(game, null).ConfigureAwait(false);
+            GameAchievementData data;
+            using (localProvider.BeginRealtimeLogThrottle())
+            {
+                data = await localProvider.GetAchievementsAsync(game, null).ConfigureAwait(false);
+            }
+
             if (data == null)
             {
                 return cachedBefore;
@@ -385,6 +402,8 @@ namespace PlayniteAchievements.Services.Local
             {
                 data.ProviderKey = "Local";
             }
+
+            RestoreCachedAchievementIconPaths(data, cachedBefore);
 
             var writeResult = _cacheManager.SaveGameData(game.Id.ToString(), data);
             if (writeResult?.Success != true)
@@ -402,11 +421,82 @@ namespace PlayniteAchievements.Services.Local
             return currentSnapshot;
         }
 
+        private void QueueRefreshGameInExtensionAfterUnlock(Game game)
+        {
+            if (_refreshGameInExtensionAsync == null ||
+                game == null ||
+                game.Id == Guid.Empty ||
+                ProviderRegistry.Settings<LocalSettings>()?.RefreshAchievementsOnRealtimeUnlock != true)
+            {
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    _logger?.Info($"[LocalMonitor] Refreshing extension data for '{game.Name}' after showing real-time unlock notification.");
+                    await _refreshGameInExtensionAsync(game, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Warn(ex, $"[LocalMonitor] Extension refresh after real-time unlock failed for '{game.Name}'.");
+                }
+            });
+        }
+
         private AchievementSnapshot CaptureSnapshot(Guid gameId)
         {
             var cacheManager = _cacheManager as CacheManager;
             var data = cacheManager?.LoadGameData(gameId.ToString(), "Local");
             return BuildSnapshot(data);
+        }
+
+        private static void RestoreCachedAchievementIconPaths(
+            GameAchievementData currentData,
+            AchievementSnapshot cachedSnapshot)
+        {
+            if (currentData?.Achievements == null || cachedSnapshot?.Achievements == null)
+            {
+                return;
+            }
+
+            foreach (var achievement in currentData.Achievements)
+            {
+                var key = BuildAchievementKey(achievement);
+                if (string.IsNullOrWhiteSpace(key) ||
+                    !cachedSnapshot.Achievements.TryGetValue(key, out var cachedAchievement))
+                {
+                    continue;
+                }
+
+                if (IsExistingLocalFile(cachedAchievement.UnlockedIconPath))
+                {
+                    achievement.UnlockedIconPath = cachedAchievement.UnlockedIconPath;
+                }
+
+                if (IsExistingLocalFile(cachedAchievement.LockedIconPath))
+                {
+                    achievement.LockedIconPath = cachedAchievement.LockedIconPath;
+                }
+            }
+        }
+
+        private static bool IsExistingLocalFile(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            var normalized = AchievementIconResolver.NormalizeIconPath(path);
+            if (Uri.TryCreate(normalized, UriKind.Absolute, out var uri) &&
+                uri.IsFile)
+            {
+                normalized = uri.LocalPath;
+            }
+
+            return Path.IsPathRooted(normalized) && File.Exists(normalized);
         }
 
         private AchievementSnapshot BuildSnapshot(GameAchievementData data)
@@ -439,7 +529,17 @@ namespace PlayniteAchievements.Services.Local
                     achievement.TrophyType);
             }
 
-            return new AchievementSnapshot(data.UnlockedCount, unlocked);
+            var achievements = (data.Achievements ?? Enumerable.Empty<AchievementDetail>())
+                .Where(achievement => !string.IsNullOrWhiteSpace(BuildAchievementKey(achievement)))
+                .GroupBy(BuildAchievementKey, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => new CachedAchievementIconInfo(
+                        group.First().UnlockedIconPath,
+                        group.First().LockedIconPath),
+                    StringComparer.OrdinalIgnoreCase);
+
+            return new AchievementSnapshot(data.UnlockedCount, unlocked, achievements);
         }
 
         private static bool SnapshotsEqual(AchievementSnapshot left, AchievementSnapshot right)
@@ -513,17 +613,38 @@ namespace PlayniteAchievements.Services.Local
 
         private sealed class AchievementSnapshot
         {
-            public AchievementSnapshot(int unlockedCount, IDictionary<string, UnlockedAchievementInfo> unlockedAchievements)
+            public AchievementSnapshot(
+                int unlockedCount,
+                IDictionary<string, UnlockedAchievementInfo> unlockedAchievements,
+                IDictionary<string, CachedAchievementIconInfo> achievements)
             {
                 UnlockedCount = unlockedCount;
                 UnlockedAchievements = new Dictionary<string, UnlockedAchievementInfo>(
                     unlockedAchievements ?? new Dictionary<string, UnlockedAchievementInfo>(),
+                    StringComparer.OrdinalIgnoreCase);
+                Achievements = new Dictionary<string, CachedAchievementIconInfo>(
+                    achievements ?? new Dictionary<string, CachedAchievementIconInfo>(),
                     StringComparer.OrdinalIgnoreCase);
             }
 
             public int UnlockedCount { get; }
 
             public IDictionary<string, UnlockedAchievementInfo> UnlockedAchievements { get; }
+
+            public IDictionary<string, CachedAchievementIconInfo> Achievements { get; }
+        }
+
+        private sealed class CachedAchievementIconInfo
+        {
+            public CachedAchievementIconInfo(string unlockedIconPath, string lockedIconPath)
+            {
+                UnlockedIconPath = unlockedIconPath;
+                LockedIconPath = lockedIconPath;
+            }
+
+            public string UnlockedIconPath { get; }
+
+            public string LockedIconPath { get; }
         }
 
         private sealed class UnlockedAchievementInfo

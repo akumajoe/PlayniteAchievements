@@ -10,6 +10,7 @@ using PlayniteAchievements.Models.Achievements;
 using PlayniteAchievements.Providers;
 using PlayniteAchievements.Providers.Exophase;
 using PlayniteAchievements.Services;
+using PlayniteAchievements.Services.Local;
 
 namespace PlayniteAchievements.Services.Exophase
 {
@@ -26,8 +27,10 @@ namespace PlayniteAchievements.Services.Exophase
         private readonly ICacheManager _cacheManager;
         private readonly ProviderRegistry _providerRegistry;
         private readonly NotificationPublisher _notifications;
+        private readonly LocalAchievementScreenshotService _screenshotService;
         private readonly Func<Guid, bool> _isRealtimeNotificationDisabled;
         private readonly Func<Guid, bool> _isExcludedFromRefreshes;
+        private readonly Func<Game, CancellationToken, Task> _refreshGameInExtensionAsync;
         private readonly ILogger _logger;
 
         private readonly object _sync = new object();
@@ -41,15 +44,19 @@ namespace PlayniteAchievements.Services.Exophase
             ICacheManager cacheManager,
             ProviderRegistry providerRegistry,
             NotificationPublisher notifications,
+            LocalAchievementScreenshotService screenshotService,
             Func<Guid, bool> isRealtimeNotificationDisabled,
             Func<Guid, bool> isExcludedFromRefreshes,
+            Func<Game, CancellationToken, Task> refreshGameInExtensionAsync,
             ILogger logger)
         {
             _cacheManager = cacheManager ?? throw new ArgumentNullException(nameof(cacheManager));
             _providerRegistry = providerRegistry ?? throw new ArgumentNullException(nameof(providerRegistry));
             _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
+            _screenshotService = screenshotService ?? throw new ArgumentNullException(nameof(screenshotService));
             _isRealtimeNotificationDisabled = isRealtimeNotificationDisabled;
             _isExcludedFromRefreshes = isExcludedFromRefreshes;
+            _refreshGameInExtensionAsync = refreshGameInExtensionAsync;
             _logger = logger;
         }
 
@@ -173,7 +180,11 @@ namespace PlayniteAchievements.Services.Exophase
                                 soundPath,
                                 game: game,
                                 notificationProviderKey: "Exophase");
+                            var unlockNames = newlyUnlocked.Select(i => i.DisplayName).ToList();
+                            _ = _screenshotService.TryCaptureUnlockScreenshotsAsync(game, unlockNames, cancellationToken);
                         }
+
+                        QueueRefreshGameInExtensionAfterUnlock(game);
                     }
                     else if (previousSnapshot == null && currentSnapshot != null)
                     {
@@ -210,6 +221,12 @@ namespace PlayniteAchievements.Services.Exophase
             if (_isExcludedFromRefreshes?.Invoke(game.Id) == true)
             {
                 _logger?.Info($"[ExophaseMonitor] Skipping monitor for '{game.Name}' because the game is excluded from refreshes.");
+                return false;
+            }
+
+            if (_isRealtimeNotificationDisabled?.Invoke(game.Id) == true)
+            {
+                _logger?.Info($"[ExophaseMonitor] Skipping monitor for '{game.Name}' because real-time notifications are disabled for this game.");
                 return false;
             }
 
@@ -261,6 +278,30 @@ namespace PlayniteAchievements.Services.Exophase
 
             _cacheManager.NotifyCacheInvalidated();
             return BuildSnapshot(fetchedData);
+        }
+
+        private void QueueRefreshGameInExtensionAfterUnlock(Game game)
+        {
+            if (_refreshGameInExtensionAsync == null ||
+                game == null ||
+                game.Id == Guid.Empty ||
+                ProviderRegistry.Settings<Providers.Local.LocalSettings>()?.RefreshAchievementsOnRealtimeUnlock != true)
+            {
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    _logger?.Info($"[ExophaseMonitor] Refreshing extension data for '{game.Name}' after showing real-time unlock notification.");
+                    await _refreshGameInExtensionAsync(game, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Warn(ex, $"[ExophaseMonitor] Extension refresh after real-time unlock failed for '{game.Name}'.");
+                }
+            });
         }
 
         private AchievementSnapshot CaptureSnapshot(Guid gameId)
