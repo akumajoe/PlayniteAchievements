@@ -99,6 +99,113 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 
 ## Next release - TBD
 
+- Fixed Local achievement replay and screenshot floods
+- Added epic emulator compatibility
+- Fixed `SAN` transition screenshot
+  - There is now an option in `Memories` to choose the `SAN` view and how many ms before it ends to take the screenshot
+- Added a preview of `VIew 1` and `View 2` for `SAN`transitions
+  - `Show Vew1` and `Show View2` buttons located under the `Show Notification` in the `Notification Style` menu
+- Fix `<rarityIcon>` not taking the achievements points instead of the percentage rarity text
+- Fixed the `Show Notification` not hiding on the second click
+- Added a on/off background option for primary and secondary icons
+- Added a color picker for the primary and secondary icon
+- Builder will now populate all the element details under the `Manual Element CSS`
+- Fixed the Builder not changing the preview to the correct `Position` when no `SAN` element / transition are present
+- Fixed the `Cover` size after changing it size through the builder
+- Added a on/off background option for the `Cover` background
+- Added a color picker for the `Cover` background
+- Added the possibility of attaching icons to the lines
+- Corrected the height not changing in the builder with the `Auto height` enabled
+- Added a center option for the cover when the `Auto height` is selected
+- Added a border-aware text wrapping in both the builder and extension
+- Cover element will now appear even when no `Preview Game` is selected
+- Added a border size settings
+- Added compatibility with `SOVEREIGN.ini`
+- Added the installation folder to the Auto-scanned folders' list
+- Added the file also to the `Local save folder override` shown path
+
+## 2026-09-14 - v3.2.1.1
+
+- v3.2.1 merge
+- Made the extension setting to open quicker. It will now load the `Achievement Notification` UI only when entering in it's tab.
+
+## 2026-09-09 - v3.2.0.2
+
+- Fixed not taking the screenshot when achievements were unlocked
+- Fixed video recording not working with the custom notification style
+- Changed the `[InGameMonitor] Configured...` logs to only when there are changes or every 5 minutes
+
+## 2026-09-09 - v3.2.0.1
+
+- v3.2.0 merge
+
+## Old Changelogs
+<details>
+
+## 2026-09-06 - v3.1.3.3
+
+- Fixed achievements not been retrieve correctly when an `<appid>.json` existed in the steam's folder
+- Fixed freezing when right clicking a game in the library
+- Fixed `Solaris` theme migration
+
+## 2026-08-30 - v3.1.3.2
+
+- Fixed missing categorized achievements fro `Local` platform
+- Attempt to fix / prevent the `CookiesBadAfterRefresh` in steam refresh
+
+## 2026-08-24 - v3.1.3.1
+
+- v3.1.3 merge
+
+## 2026-08-13 - v3.1.2.1
+
+- v3.1.2 merge
+- Fixed steamhunters hidden achievements not respecting the extension language setting
+- Fixed the multiple folders dropdown not showing correctly
+- Fixed the RA subset selection not been saved after Playnite's restart
+- Added the option in the `Theme Migration` to change the right click behavior for the `StartPage` extension to use the default playnite context menu
+
+## 2026-08-08 - v3.1.1.1
+
+- v3.1.1 merge
+- Fixed Hidden achievements description not respecting the language setting
+- Added the option to apply a selected subset to the RA Game ID Override
+- Fixed the achievement refresh to `New Game` when adding a new game to playnite
+- Fixed the `clear` in the `Manage Achievements` not clearing the `Provider Override` selection
+- Changed the `Inline real-time preview` to show the WebView2 preview instead of the WPF
+- Added `Font` to the `Line` customization
+- Added `Text formatting` below the `Corners` and `Opacity` settings
+- Changed the `Achievement Notification` UI, it now has two tabs:
+  - `General`
+  - `Notification Style` with all the settings for the custom notification
+  - `Memories` with all the settings for the screenshot and the video recording
+- Made the `Achievement Notification` screenshot and video recording to work independently if the notification is active or not
+  - This way it can be used with the original notification from the original fork with the changes to the settings.
+- Changed the Screenshot behavior to be a mirror of the original fork screenshot mechanism with the additional wildcard in the path and name
+
+## 2026-08-06 - v3.1.0.1
+
+- v3.1.0 merge
+- Added the setting for the automatic theme migration under the `Theme Migration` tab
+- Fixed the friend's achievements not appearing correctly when two friends's accounts are merged
+- Added logs for the screenshot and for the video from the `Achievement Notification`
+- Removed the always on overlay for the `Achievement Notification`
+- Fixed the `<rarity>` wildcard showing the rarity tier instead of percentage.
+
+## 2026-08-02 - v3.0.0.1
+
+- v3.0.0 merge
+- `Start-page` migration fixed to not show the friend's achievements
+- Added the option for the highlighted achievement in the `Theme Migration`
+- Changed the trigger for the `Achievement Notification` to use the one from the original fork
+- Changed the screenshot in the `Achievement Notification` to use the one from the original fork but with these custom settings
+- Added the video settings to the `Achievement Notification` to use the one from the original fork but with these custom settings
+- Change the `Local save folder override` to mention that it isn't using any local folder if that's the case
+- Added a refresh icon in the `View Achievements` window to refresh the achievements from that window
+- Added a dedicated file for the `Debug` setting for the `Achievement Notification`. The file is called `AchNotifDebug.log`
+
+## 2026-07-27 - v2.5.3.4
+
 - Fixed `RetroAchievements Game ID Override` displaying `No override set` after setting an override
 - Removed `Display Order` column since the third click feature sorts with the correct RA order
 - Restored the third click in the header to remove the column sort
@@ -108,6 +215,8 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 - Added `Opacity` setting for the `Achievement Notification`
 - Fixed `Banner opacity` changing the notification opacity
 - Fixed the defined overrides not appearing in the `Overview` tab
+- Added Debug mode for the achievement notification to generate additional logs
+- The setting to have the overlay in the same monitor as the game for multiple monitors is set to false as default
 
 ## 2026-07-20 - v2.5.3.3
 - Trying to make the WebView notification quicker
@@ -162,8 +271,6 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 - Fixed the wrong placement for the level and points in `Prestige Score` and the `Collection Score`
 - Added support for achievement with progress bar
 
-## Old Changelogs
-<details>
 
 ## 2026-06-18 - v2.5.1.1
 - v2.5.1 merge
@@ -397,4 +504,3 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 - Upstream documentation: https://github.com/justin-delano/PlayniteAchievements/wiki
 - Upstream releases: https://github.com/justin-delano/PlayniteAchievements/releases
 - Santodan fork: https://github.com/Santodan/PlayniteAchievements
-

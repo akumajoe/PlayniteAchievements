@@ -33,6 +33,12 @@ namespace PlayniteAchievements.Services.ThemeMigration
 
         public void ScheduleAutoMigration()
         {
+            if (_settings?.Persisted?.EnableAutomaticThemeMigration != true)
+            {
+                _logger?.Info("Automatic theme migration is disabled.");
+                return;
+            }
+
             try
             {
                 _ = Task.Run(async () =>
@@ -82,7 +88,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
                                         !string.Equals(cached.MigratedThemeVersion, t.CurrentThemeVersion, StringComparison.OrdinalIgnoreCase))
                             .ToList();
 
-                        // Also migrate themes that have never been migrated (not in cache at all)
+                        // Also migrate themes that have never been migrated (not in cache at all).
                         var firstTime = themes
                             .Where(t => t != null && t.NeedsMigration)
                             .Where(t => cache == null || !cache.ContainsKey(t.Path))

@@ -16,7 +16,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
         private readonly ILogger _logger;
         private readonly IPlayniteAPI _playniteApi;
         private const string BackupFolderName = "PlayniteAchievements_backup";
-        // Must match ThemeMigrationService.PluginExtensionId
+        // Must match ThemeMigrationService.PluginExtensionId.
         private const string PluginExtensionId = "PlayniteAchievementsSantodan";
 
         public ThemeDiscoveryService(ILogger logger, IPlayniteAPI playniteApi)
@@ -250,7 +250,8 @@ namespace PlayniteAchievements.Services.ThemeMigration
             return GetDefaultThemesPaths().FirstOrDefault();
         }
 
-        public List<ThemeInfo> DiscoverDefaultThemes(IReadOnlyDictionary<string, ThemeMigrationCacheEntry> themeMigrationVersionCache = null)
+        public List<ThemeInfo> DiscoverDefaultThemes(
+            IReadOnlyDictionary<string, ThemeMigrationCacheEntry> themeMigrationVersionCache = null)
         {
             var discoveredThemes = new Dictionary<string, ThemeInfo>(StringComparer.OrdinalIgnoreCase);
 
@@ -374,27 +375,30 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 return false;
             }
 
-            // Themes built for the original PlayniteAchievements fork (e.g. Aniki ReMake) write
-            // "PluginStatus Plugin=PlayniteAchievements" for install checks.  PluginStatus resolves
-            // against the extension ID, not the SourceName, so this always returns false in this fork
-            // (ID = PlayniteAchievementsSantodan).  Detect and flag them for migration.
-            // Themes built for the original PlayniteAchievements fork write
-            // PluginStatus Plugin=PlayniteAchievements (or sometimes Id=PlayniteAchievements)
-            // for install checks. PluginStatus resolves against extension IDs, so these fail in this fork
-            // where the extension ID is PlayniteAchievementsSantodan.
-            if (Regex.IsMatch(content, @"PluginStatus\s+(?:Plugin|Id)\s*=\s*['""]?PlayniteAchievements(?!Santodan)", RegexOptions.IgnoreCase))
+            // Themes built for the original PlayniteAchievements fork use that source name in
+            // PluginStatus gates. PluginStatus resolves extension IDs, so those gates must be
+            // rewritten for the Santodan extension ID.
+            if (Regex.IsMatch(
+                content,
+                @"PluginStatus\s+(?:Plugin|Id)\s*=\s*['""]?PlayniteAchievements(?!Santodan)",
+                RegexOptions.IgnoreCase))
             {
                 return true;
             }
 
-            if (content.IndexOf("PlayniteAchievementsSantodanSantodan", StringComparison.OrdinalIgnoreCase) >= 0)
+            if (content.IndexOf(
+                "PlayniteAchievementsSantodanSantodan",
+                StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 return true;
             }
 
-            // Normalize historical migrations that rewrote PluginSettings source aliases
-            // to the extension ID. Theme source names should stay on PlayniteAchievements.
-            if (Regex.IsMatch(content, @"PluginSettings\s+Plugin\s*=\s*['""]?PlayniteAchievementsSantodan['""]?", RegexOptions.IgnoreCase))
+            // Normalize historical migrations that rewrote PluginSettings source aliases to
+            // the extension ID. Theme source names should stay on PlayniteAchievements.
+            if (Regex.IsMatch(
+                content,
+                @"PluginSettings\s+Plugin\s*=\s*['""]?PlayniteAchievementsSantodan['""]?",
+                RegexOptions.IgnoreCase))
             {
                 return true;
             }
@@ -436,9 +440,8 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 return false;
             }
 
-            // Only treat as already-native if the theme explicitly references the Santodan extension ID.
-            // Themes that only contain the SourceName "PlayniteAchievements" (e.g. PluginSettings bindings)
-            // still need the PluginStatus install-check bindings fixed.
+            // Only the Santodan extension ID proves native support. A plain
+            // PlayniteAchievements source alias can still contain broken PluginStatus gates.
             return content.IndexOf(PluginExtensionId, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 

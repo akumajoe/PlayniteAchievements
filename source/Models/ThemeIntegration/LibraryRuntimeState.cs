@@ -5,7 +5,10 @@ namespace PlayniteAchievements.Models.ThemeIntegration
 {
     internal sealed class LibraryRuntimeState
     {
-        public bool HasData => TotalTrophies > 0;
+        public bool HasData =>
+            TotalTrophies > 0 ||
+            (AllAchievements != null && AllAchievements.Count > 0) ||
+            (AllGamesWithAchievements != null && AllGamesWithAchievements.Count > 0);
         public bool HeavyListsBuilt { get; set; } = true;
 
         public List<GameAchievementSummary> AllGamesWithAchievements { get; set; } = new List<GameAchievementSummary>();
@@ -27,10 +30,14 @@ namespace PlayniteAchievements.Models.ThemeIntegration
         public List<GameAchievementSummary> AppleGames { get; set; } = new List<GameAchievementSummary>();
         public List<GameAchievementSummary> GooglePlayGames { get; set; } = new List<GameAchievementSummary>();
         public List<GameAchievementSummary> HoyoverseGames { get; set; } = new List<GameAchievementSummary>();
+        public List<GameAchievementSummary> LocalGames { get; set; } = new List<GameAchievementSummary>();
         public List<GameAchievementSummary> UbisoftGames { get; set; } = new List<GameAchievementSummary>();
         public List<GameAchievementSummary> RPCS3Games { get; set; } = new List<GameAchievementSummary>();
         public List<GameAchievementSummary> XeniaGames { get; set; } = new List<GameAchievementSummary>();
         public List<GameAchievementSummary> ShadPS4Games { get; set; } = new List<GameAchievementSummary>();
+        public List<GameAchievementSummary> GameJoltGames { get; set; } = new List<GameAchievementSummary>();
+        public List<GameAchievementSummary> RiotGames { get; set; } = new List<GameAchievementSummary>();
+        public List<GameAchievementSummary> FFXIVGames { get; set; } = new List<GameAchievementSummary>();
         public List<GameAchievementSummary> ManualGames { get; set; } = new List<GameAchievementSummary>();
 
         public int TotalTrophies { get; set; }

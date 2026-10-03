@@ -4,7 +4,8 @@ using PlayniteAchievements.Models.Achievements;
 using PlayniteAchievements.Models.Settings;
 using PlayniteAchievements.Models.ThemeIntegration;
 using PlayniteAchievements.Services;
-using PlayniteAchievements.ViewModels;
+using PlayniteAchievements.Services.Achievements;
+using PlayniteAchievements.ViewModels.Items;
 
 namespace PlayniteAchievements.Views.ThemeIntegration.Modern
 {
@@ -15,6 +16,13 @@ namespace PlayniteAchievements.Views.ThemeIntegration.Modern
     /// </summary>
     public partial class AchievementCompactUnlockedListControl : AchievementCompactListControlBase
     {
+        public static readonly System.Windows.DependencyProperty ShowFeaturedItemProperty =
+            System.Windows.DependencyProperty.Register(
+                nameof(ShowFeaturedItem),
+                typeof(bool),
+                typeof(AchievementCompactUnlockedListControl),
+                new System.Windows.PropertyMetadata(true, OnShowFeaturedItemChanged));
+
         public static readonly System.Windows.DependencyProperty FeaturedItemProperty =
             System.Windows.DependencyProperty.Register(
                 nameof(FeaturedItem),
@@ -34,6 +42,26 @@ namespace PlayniteAchievements.Views.ThemeIntegration.Modern
         }
 
         /// <summary>
+        /// Gets or sets whether the newest unlocked achievement is featured above the
+        /// horizontal list. When disabled, every item remains in the scrollable row.
+        /// </summary>
+        public bool ShowFeaturedItem
+        {
+            get => (bool)GetValue(ShowFeaturedItemProperty);
+            set => SetValue(ShowFeaturedItemProperty, value);
+        }
+
+        private static void OnShowFeaturedItemChanged(
+            System.Windows.DependencyObject dependencyObject,
+            System.Windows.DependencyPropertyChangedEventArgs eventArgs)
+        {
+            if (dependencyObject is AchievementCompactUnlockedListControl control)
+            {
+                control.RefreshItemsSource();
+            }
+        }
+
+        /// <summary>
         /// Returns true only for unlocked achievements.
         /// </summary>
         protected override bool FilterAchievement(AchievementDetail achievement) => achievement.Unlocked;
@@ -42,8 +70,6 @@ namespace PlayniteAchievements.Views.ThemeIntegration.Modern
         /// Uses the shared selected-game sort source, then filters to unlocked achievements.
         /// </summary>
         protected override AchievementSortSurface SortSurface => AchievementSortSurface.CompactUnlockedList;
-
-        protected override bool UseAdaptiveOverflowPreview => false;
 
         protected override List<AchievementDetail> GetOrderedAchievements(ModernThemeBindings theme)
         {
@@ -61,12 +87,15 @@ namespace PlayniteAchievements.Views.ThemeIntegration.Modern
         /// </summary>
         protected override void RefreshItemsSource()
         {
-            FeaturedItem = DisplayItems.FirstOrDefault();
-            var remainingItems = DisplayItems.Skip(1).ToList();
+            FeaturedItem = ShowFeaturedItem
+                ? DisplayItems.FirstOrDefault()
+                : null;
 
             if (AchievementsList != null)
             {
-                AchievementsList.ItemsSource = remainingItems;
+                AchievementsList.ItemsSource = ShowFeaturedItem
+                    ? DisplayItems.Skip(1).ToList()
+                    : DisplayItems.ToList();
             }
         }
     }

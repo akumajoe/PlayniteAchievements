@@ -13,12 +13,24 @@ using PlayniteAchievements.Common;
 using PlayniteAchievements.Models;
 using PlayniteAchievements.Models.Achievements;
 using PlayniteAchievements.Models.Settings;
-using PlayniteAchievements.Providers.Manual;
 using PlayniteAchievements.Providers.Local;
+using PlayniteAchievements.Providers.Manual;
+using PlayniteAchievements.Services.Achievements;
+using PlayniteAchievements.Services.Cache;
+using PlayniteAchievements.Services.Captures;
+using PlayniteAchievements.Services.Images;
+using PlayniteAchievements.Services.GameCustomData;
+using PlayniteAchievements.Services.Library;
 using PlayniteAchievements.Services.Logging;
+using PlayniteAchievements.Services.Friends;
+using PlayniteAchievements.Services.Refresh;
 using PlayniteAchievements.ViewModels;
+using PlayniteAchievements.ViewModels.Items;
+using PlayniteAchievements.ViewModels.ManageAchievements;
 using PlayniteAchievements.Views;
+using PlayniteAchievements.Views.Dialogs;
 using PlayniteAchievements.Views.Helpers;
+using PlayniteAchievements.Views.ManageAchievements;
 
 namespace PlayniteAchievements.Services.UI
 {
@@ -28,13 +40,17 @@ namespace PlayniteAchievements.Services.UI
     internal class PluginWindowService : IDisposable
     {
         private const string ViewAchievementsWindowPlacementKey = "SingleGameAchievements";
+        private const string ViewFriendsAchievementsWindowPlacementKey = "SingleGameFriendsAchievements";
         private const string ManageAchievementsWindowPlacementKey = "ManageAchievements";
         private const string OverviewWindowPlacementKey = "Overview";
+        private const string ColorPickerWindowPlacementKey = "ColorPicker";
+        private const string LocalAchievementEditorWindowPlacementKey = "LocalAchievementEditor";
         private const int ShowWindowRestore = 9;
 
         private enum AchievementWindowKind
         {
             ViewAchievements,
+            ViewFriendsAchievements,
             ManageAchievements
         }
 
@@ -46,7 +62,10 @@ namespace PlayniteAchievements.Services.UI
         private readonly Action _persistSettingsForUi;
         private readonly AchievementOverridesService _achievementOverridesService;
         private readonly AchievementDataService _achievementDataService;
+        private readonly LibraryProjectionService _libraryProjectionService;
         private readonly GameCustomDataStore _gameCustomDataStore;
+        private readonly FriendsOverviewDataCoordinator _friendsOverviewDataCoordinator;
+        private readonly FriendGameAchievementsDataCoordinator _friendGameAchievementsDataCoordinator;
         private readonly PlayniteAchievementsSettings _settings;
         private readonly ManualSourceRegistry _manualSourceRegistry;
         private readonly Action _ensureAchievementResourcesLoaded;
@@ -65,11 +84,14 @@ namespace PlayniteAchievements.Services.UI
             Action persistSettingsForUi,
             AchievementOverridesService achievementOverridesService,
             AchievementDataService achievementDataService,
+            LibraryProjectionService libraryProjectionService,
             GameCustomDataStore gameCustomDataStore,
             PlayniteAchievementsSettings settings,
             ManualSourceRegistry manualSourceRegistry,
             Action ensureAchievementResourcesLoaded,
-            FullscreenControllerNavigationService fullscreenControllerNavigationService)
+            FullscreenControllerNavigationService fullscreenControllerNavigationService,
+            FriendsOverviewDataCoordinator friendsOverviewDataCoordinator = null,
+            FriendGameAchievementsDataCoordinator friendGameAchievementsDataCoordinator = null)
         {
             _api = api;
             _logger = logger;
@@ -79,7 +101,10 @@ namespace PlayniteAchievements.Services.UI
             _persistSettingsForUi = persistSettingsForUi ?? throw new ArgumentNullException(nameof(persistSettingsForUi));
             _achievementOverridesService = achievementOverridesService;
             _achievementDataService = achievementDataService ?? throw new ArgumentNullException(nameof(achievementDataService));
+            _libraryProjectionService = libraryProjectionService;
             _gameCustomDataStore = gameCustomDataStore;
+            _friendsOverviewDataCoordinator = friendsOverviewDataCoordinator;
+            _friendGameAchievementsDataCoordinator = friendGameAchievementsDataCoordinator;
             _settings = settings;
             _manualSourceRegistry = manualSourceRegistry ?? throw new ArgumentNullException(nameof(manualSourceRegistry));
             _ensureAchievementResourcesLoaded = ensureAchievementResourcesLoaded;
@@ -97,6 +122,17 @@ namespace PlayniteAchievements.Services.UI
             {
                 _logger?.Debug(ex, "Failed to dispose plugin window soft-close coordinator.");
             }
+        }
+
+        /// <summary>
+        /// True when any plugin-owned popout window (view achievements, manage, overview)
+        /// is currently open. Lets hotkey guards distinguish the plugin's own desktop
+        /// modals from foreign ones (e.g. Playnite's add-ons dialog), which keep blocking.
+        /// </summary>
+        public bool HasOpenPluginWindow()
+        {
+            return _achievementWindows.Values.Any(window => window?.IsVisible == true) ||
+                   _overviewWindow?.IsVisible == true;
         }
 
         private bool DetectFullscreenMode()
@@ -154,6 +190,49 @@ namespace PlayniteAchievements.Services.UI
             window.ContentRendered += contentRenderedHandler;
         }
 
+        public string PickColor(Window owner, string currentValue)
+        {
+            _ensureAchievementResourcesLoaded?.Invoke();
+
+            var view = new AlphaColorPickerDialog();
+            view.SetInitialColor(currentValue);
+            var window = PlayniteUiProvider.CreateExtensionWindow(
+                ResourceProvider.GetString("LOCPlayAch_ColorPicker_WindowTitle"),
+                view,
+                new WindowOptions
+                {
+                    ShowMinimizeButton = false,
+                    ShowMaximizeButton = false,
+                    ShowCloseButton = true,
+                    CanBeResizable = true,
+                    Width = 440,
+                    Height = 465
+                });
+
+            window.MinWidth = 420;
+            window.MinHeight = 440;
+
+            try
+            {
+                window.Owner = owner ?? _api?.Dialogs?.GetCurrentAppWindow();
+                window.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            }
+            catch (Exception ex)
+            {
+                _logger?.Debug(ex, "Failed to set owner for color picker window.");
+            }
+
+            AttachWindowPlacement(window, ColorPickerWindowPlacementKey, isFullscreen: false);
+
+            view.RequestClose += (_, __) =>
+            {
+                window.DialogResult = view.DialogResult;
+            };
+
+            PrepareForegroundActivation(window);
+            return window.ShowDialog() == true ? view.SelectedColorText : null;
+        }
+
         private static void QueueBringWindowToForeground(Window window)
         {
             if (window == null)
@@ -192,6 +271,8 @@ namespace PlayniteAchievements.Services.UI
             IFullscreenControllerNavigable fullscreenController = null,
             bool enableSoftClose = true)
         {
+            _ensureAchievementResourcesLoaded?.Invoke();
+
             var window = PlayniteUiProvider.CreateExtensionWindow(
                 title,
                 view,
@@ -200,7 +281,10 @@ namespace PlayniteAchievements.Services.UI
 
             configureWindow?.Invoke(window);
             AttachWindowPlacement(window, placementKey, isFullscreen);
-            EnsureOwner(window);
+            if (!isFullscreen)
+            {
+                PerMonitorWindowRealizer.Apply(window, EnsureOwner(window), _logger, "Popout");
+            }
 
             if (closed != null)
             {
@@ -259,7 +343,33 @@ namespace PlayniteAchievements.Services.UI
                 return;
             }
 
-            _softCloseCoordinator.Register(window, EnsureOwner(window));
+            // The owner is resolved at click time, not captured here: hotkey-opened windows can
+            // register before any Playnite window is resolvable as owner.
+            _softCloseCoordinator.Register(window, () => ResolveSoftCloseOwner(window));
+        }
+
+        private Window ResolveSoftCloseOwner(Window window)
+        {
+            try
+            {
+                if (window.Owner != null)
+                {
+                    return window.Owner;
+                }
+
+                var current = _api?.Dialogs?.GetCurrentAppWindow();
+                if (current != null && !ReferenceEquals(current, window))
+                {
+                    return current;
+                }
+
+                var main = Application.Current?.MainWindow;
+                return ReferenceEquals(main, window) ? null : main;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         public void ShowRefreshProgressControlAndRun(Func<Task> refreshTask, Action<Guid> openViewAchievementsWindow, Guid? singleGameRefreshId = null)
@@ -386,6 +496,7 @@ namespace PlayniteAchievements.Services.UI
 
             _api.Dialogs.ActivateGlobalProgress(async progress =>
             {
+                RefreshAuthContext authContext = null;
                 UpdateGlobalProgress(
                     progress,
                     text: initialText,
@@ -395,17 +506,17 @@ namespace PlayniteAchievements.Services.UI
 
                 if (validateAuthentication)
                 {
-                    var providers = await _refreshService
-                        .GetAuthenticatedProvidersOrShowDialogAsync(progress.CancelToken)
+                    authContext = await _refreshService
+                        .GetRefreshAuthContextOrShowDialogAsync(request, progress.CancelToken)
                         .ConfigureAwait(false);
-                    if (providers == null || providers.Count == 0)
+                    if (authContext == null || !authContext.HasAuthenticatedProviders)
                     {
                         _logger?.Info("RunRefreshWithGlobalProgressAsync: Authentication preflight found no authenticated providers.");
                         SafeInvokeRefreshCompleted(onCompleted, false);
                         return;
                     }
 
-                    _logger?.Info($"RunRefreshWithGlobalProgressAsync: Authentication preflight completed with {providers.Count} provider(s).");
+                    _logger?.Info($"RunRefreshWithGlobalProgressAsync: Authentication preflight completed with {authContext.AuthenticatedProviders.Count} provider(s).");
                     UpdateGlobalProgress(
                         progress,
                         text: ResourceProvider.GetString("LOCPlayAch_Status_Starting"),
@@ -445,8 +556,9 @@ namespace PlayniteAchievements.Services.UI
                             text: report.Message,
                             current: Math.Max(0, Math.Min(100, percent)));
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        _logger?.Debug(ex, "Failed to update global progress from rebuild progress report.");
                     }
                 };
 
@@ -462,6 +574,7 @@ namespace PlayniteAchievements.Services.UI
                             ValidateAuthentication = false,
                             SwallowExceptions = false,
                             ErrorLogMessage = errorLogMessage,
+                            AuthContext = authContext,
                             ExternalCancellationToken = progress.CancelToken
                         }), progress.CancelToken).ConfigureAwait(false);
                     success = true;
@@ -664,8 +777,146 @@ namespace PlayniteAchievements.Services.UI
                 _logger.Error(ex, "Failed to open Achievements Overview window");
                 _api?.Dialogs?.ShowErrorMessage(
                     $"Failed to open achievements overview: {ex.Message}",
-                    ResourceProvider.GetString("LOCPlayAch_Title_PluginName") ?? "Playnite Achievements");
+                    ResourceProvider.GetString("LOCPlayAch_Title_PluginName"));
             }
+        }
+
+        /// <summary>
+        /// Hosts an arbitrary plugin control in a managed popout window (fullscreen-capable, so
+        /// it works where Playnite's native plugin settings dialog is unavailable). Soft-close
+        /// is disabled so a stray click does not dismiss it. The <paramref name="closed"/>
+        /// callback runs when the window closes.
+        /// </summary>
+        public void OpenManagedPopout(
+            string title,
+            UserControl view,
+            WindowOptions windowOptions,
+            string placementKey,
+            Action closed)
+        {
+            InvokeOnUiThread(() =>
+            {
+                try
+                {
+                    var isFullscreen = DetectFullscreenMode();
+                    var window = CreateManagedPopoutWindow(
+                        title,
+                        view,
+                        windowOptions,
+                        isFullscreen,
+                        placementKey,
+                        closed: closed,
+                        enableSoftClose: false);
+                    ShowWindow(window, isFullscreen);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, $"Failed to open managed popout window '{title}'.");
+                    _api?.Dialogs?.ShowErrorMessage(
+                        ex.Message,
+                        ResourceProvider.GetString("LOCPlayAch_Title_PluginName"));
+                }
+            });
+        }
+
+        /// <summary>Opens the capture gallery for a whole game (arrows move between achievements).</summary>
+        public void OpenCapturesViewer(GameSummaryItem game)
+        {
+            if (game == null)
+            {
+                return;
+            }
+
+            var service = PlayniteAchievementsPlugin.Instance?.CaptureLibraryService;
+            var set = service?.RefreshGame(game.GameName);
+            if (set == null || !set.HasAny)
+            {
+                return;
+            }
+
+            OpenCapturesViewerCore(CaptureGalleryViewModel.ForGame(set, game.GameName));
+        }
+
+        /// <summary>Opens the whole-game capture gallery by game name (used by the Playnite library menu).</summary>
+        public void OpenCapturesViewerForGame(string gameName)
+        {
+            if (string.IsNullOrWhiteSpace(gameName))
+            {
+                return;
+            }
+
+            var service = PlayniteAchievementsPlugin.Instance?.CaptureLibraryService;
+            var set = service?.RefreshGame(gameName);
+            if (set == null || !set.HasAny)
+            {
+                return;
+            }
+
+            OpenCapturesViewerCore(CaptureGalleryViewModel.ForGame(set, gameName));
+        }
+
+        /// <summary>Opens the capture gallery for a single achievement (type selector only, no arrows).</summary>
+        public void OpenCapturesViewer(AchievementDisplayItem achievement)
+        {
+            if (achievement == null)
+            {
+                return;
+            }
+
+            var service = PlayniteAchievementsPlugin.Instance?.CaptureLibraryService;
+            var set = service?.RefreshGame(achievement.GameName);
+            if (set == null || !set.HasAny)
+            {
+                return;
+            }
+
+            var stem = AchievementIconCachePathBuilder.SanitizeSegment(achievement.DisplayName);
+            var vm = CaptureGalleryViewModel.ForAchievement(set, achievement.DisplayName, stem);
+            if (!vm.HasAny)
+            {
+                return;
+            }
+
+            OpenCapturesViewerCore(vm);
+        }
+
+        private void OpenCapturesViewerCore(CaptureGalleryViewModel viewModel)
+        {
+            InvokeOnUiThread(() =>
+            {
+                try
+                {
+                    var isFullscreen = DetectFullscreenMode();
+                    var view = new CaptureGalleryViewer(viewModel);
+                    var window = CreateManagedPopoutWindow(
+                        ResourceProvider.GetString("LOCPlayAch_Column_Captures"),
+                        view,
+                        new WindowOptions
+                        {
+                            ShowMinimizeButton = false,
+                            ShowMaximizeButton = true,
+                            ShowCloseButton = true,
+                            CanBeResizable = true,
+                            Width = 960,
+                            Height = 640
+                        },
+                        isFullscreen,
+                        placementKey: "CaptureGalleryViewer",
+                        closed: () => view.StopMedia(),
+                        fullscreenController: view,
+                        enableSoftClose: false);
+                    window.MinWidth = 480;
+                    window.MinHeight = 360;
+                    ShowWindow(window, isFullscreen);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "Failed to open captures viewer window.");
+                    _api?.Dialogs?.ShowErrorMessage(
+                        ex.Message,
+                        ResourceProvider.GetString("LOCPlayAch_Title_PluginName"));
+                }
+            });
         }
 
         private bool TryActivateOverviewWindow(bool closeIfActive)
@@ -784,7 +1035,8 @@ namespace PlayniteAchievements.Services.UI
         private bool TryActivateManageAchievementsWindow(
             Guid gameId,
             ManageAchievementsTab tab,
-            Action<ManageAchievementsControl> configureView = null)
+            bool selectManageCategoriesSubTab = false,
+            Action<ManageAchievementsControl> configureControl = null)
         {
             if (!TryGetTrackedWindow(AchievementWindowKind.ManageAchievements, gameId, out var window))
             {
@@ -793,14 +1045,8 @@ namespace PlayniteAchievements.Services.UI
 
             if (TryGetWindowContent<ManageAchievementsControl>(window, out var control))
             {
-                if (configureView != null)
-                {
-                    configureView(control);
-                }
-                else
-                {
-                    control.SelectTab(tab);
-                }
+                control.SelectTab(tab, selectManageCategoriesSubTab);
+                configureControl?.Invoke(control);
             }
 
             ActivateTrackedWindow(window);
@@ -1014,6 +1260,7 @@ namespace PlayniteAchievements.Services.UI
                 }
                 catch
                 {
+                    // Static best-effort focus fallback; no logger available here.
                 }
             }
         }
@@ -1029,12 +1276,15 @@ namespace PlayniteAchievements.Services.UI
                     _logger,
                     _refreshService,
                     _cacheManager,
-                    _persistSettingsForUi,
+                    () => PlayniteAchievementsPlugin.Instance?.PersistSettingsForUiSilently(),
                     _achievementOverridesService,
                     _achievementDataService,
+                    _libraryProjectionService,
                     _gameCustomDataStore,
                     _refreshCoordinator,
-                    _settings);
+                    _settings,
+                    OverviewLaunchContext.Popout,
+                    _friendsOverviewDataCoordinator);
 
                 var windowOptions = new WindowOptions
                 {
@@ -1048,8 +1298,7 @@ namespace PlayniteAchievements.Services.UI
 
                 var window = CreateManagedPopoutWindow(
                     ResourceProvider.GetString("LOCPlayAch_Menu_OpenOverview") ??
-                    ResourceProvider.GetString("LOCPlayAch_Title_PluginName") ??
-                    "Achievements Overview",
+                    ResourceProvider.GetString("LOCPlayAch_Title_PluginName"),
                     view,
                     windowOptions,
                     isFullscreen,
@@ -1071,15 +1320,15 @@ namespace PlayniteAchievements.Services.UI
                 _logger.Error(ex, "Failed to open Achievements Overview window");
                 _api?.Dialogs?.ShowErrorMessage(
                     $"Failed to open achievements overview: {ex.Message}",
-                    ResourceProvider.GetString("LOCPlayAch_Title_PluginName") ?? "Playnite Achievements");
+                    ResourceProvider.GetString("LOCPlayAch_Title_PluginName"));
             }
         }
 
-        public void OpenViewAchievementsWindow(Guid gameId)
+        public void OpenViewAchievementsWindow(Guid gameId, string focusAchievementId = null)
         {
             try
             {
-                InvokeOnUiThread(() => OpenViewAchievementsWindowCore(gameId));
+                InvokeOnUiThread(() => OpenViewAchievementsWindowCore(gameId, focusAchievementId));
             }
             catch (Exception ex)
             {
@@ -1090,10 +1339,17 @@ namespace PlayniteAchievements.Services.UI
             }
         }
 
-        private void OpenViewAchievementsWindowCore(Guid gameId)
+        private void OpenViewAchievementsWindowCore(Guid gameId, string focusAchievementId = null)
         {
             if (TryActivateTrackedWindow(AchievementWindowKind.ViewAchievements, gameId))
             {
+                if (!string.IsNullOrWhiteSpace(focusAchievementId) &&
+                    TryGetTrackedWindow(AchievementWindowKind.ViewAchievements, gameId, out var existingWindow) &&
+                    TryGetWindowContent<ViewAchievementsControl>(existingWindow, out var existingView))
+                {
+                    existingView.FocusAchievement(focusAchievementId);
+                }
+
                 return;
             }
 
@@ -1109,7 +1365,14 @@ namespace PlayniteAchievements.Services.UI
                     _achievementDataService,
                     _api,
                     _logger,
-                    _settings);
+                    _settings,
+                    _achievementOverridesService,
+                    _cacheManager);
+
+                if (!string.IsNullOrWhiteSpace(focusAchievementId))
+                {
+                    view.FocusAchievement(focusAchievementId);
+                }
 
                 var windowOptions = new WindowOptions
                 {
@@ -1131,6 +1394,7 @@ namespace PlayniteAchievements.Services.UI
                     {
                         createdWindow.MinWidth = 450;
                         createdWindow.MinHeight = 500;
+                        view.AttachTitleBarRefreshButton(createdWindow);
                     },
                     closed: view.Cleanup,
                     fullscreenController: view);
@@ -1144,6 +1408,80 @@ namespace PlayniteAchievements.Services.UI
                 _logger.Error(ex, $"Failed to open View Achievements window for gameId={gameId}");
                 _api?.Dialogs?.ShowErrorMessage(
                     $"Failed to open View Achievements: {ex.Message}",
+                    "Playnite Achievements");
+            }
+        }
+
+        public void OpenViewFriendsAchievementsWindow(Guid gameId)
+        {
+            try
+            {
+                InvokeOnUiThread(() => OpenViewFriendsAchievementsWindowCore(gameId));
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, $"Failed to open View Friends Achievements window for gameId={gameId}");
+                _api?.Dialogs?.ShowErrorMessage(
+                    $"Failed to open View Friends Achievements: {ex.Message}",
+                    "Playnite Achievements");
+            }
+        }
+
+        private void OpenViewFriendsAchievementsWindowCore(Guid gameId)
+        {
+            if (TryActivateTrackedWindow(AchievementWindowKind.ViewFriendsAchievements, gameId))
+            {
+                return;
+            }
+
+            CloseTrackedWindows(AchievementWindowKind.ViewFriendsAchievements);
+
+            try
+            {
+                var isFullscreen = DetectFullscreenMode();
+                var view = new ViewFriendsAchievementsControl(
+                    gameId,
+                    _friendGameAchievementsDataCoordinator,
+                    _refreshService,
+                    _refreshCoordinator,
+                    _api,
+                    _logger,
+                    _settings,
+                    _achievementOverridesService,
+                    _cacheManager);
+
+                var windowOptions = new WindowOptions
+                {
+                    ShowMinimizeButton = true,
+                    ShowMaximizeButton = true,
+                    ShowCloseButton = true,
+                    CanBeResizable = true,
+                    Width = 980,
+                    Height = 700
+                };
+
+                var window = CreateManagedPopoutWindow(
+                    view.WindowTitle,
+                    view,
+                    windowOptions,
+                    isFullscreen,
+                    ViewFriendsAchievementsWindowPlacementKey,
+                    configureWindow: createdWindow =>
+                    {
+                        createdWindow.MinWidth = 720;
+                        createdWindow.MinHeight = 500;
+                    },
+                    closed: view.Cleanup,
+                    fullscreenController: view);
+
+                TrackAchievementWindow(AchievementWindowKind.ViewFriendsAchievements, gameId, window);
+                ShowWindow(window, isFullscreen);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, $"Failed to open View Friends Achievements window for gameId={gameId}");
+                _api?.Dialogs?.ShowErrorMessage(
+                    $"Failed to open View Friends Achievements: {ex.Message}",
                     "Playnite Achievements");
             }
         }
@@ -1186,8 +1524,9 @@ namespace PlayniteAchievements.Services.UI
                         window.Owner = _api?.Dialogs?.GetCurrentAppWindow();
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _logger?.Debug(ex, "Failed to set owner for test view window.");
                 }
 
                 window.ShowDialog();
@@ -1246,8 +1585,9 @@ namespace PlayniteAchievements.Services.UI
                         window.Owner = _api?.Dialogs?.GetCurrentAppWindow();
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _logger?.Debug(ex, "Failed to set owner for test view window.");
                 }
 
                 window.ShowDialog();
@@ -1261,11 +1601,17 @@ namespace PlayniteAchievements.Services.UI
             }
         }
 
-        public void OpenManageAchievementsView(Guid gameId, ManageAchievementsTab initialTab)
+        public void OpenManageAchievementsView(
+            Guid gameId,
+            ManageAchievementsTab initialTab,
+            bool selectManageCategoriesSubTab = false)
         {
             try
             {
-                InvokeOnUiThread(() => OpenManageAchievementsViewCore(gameId, initialTab));
+                InvokeOnUiThread(() => OpenManageAchievementsViewCore(
+                    gameId,
+                    initialTab,
+                    selectManageCategoriesSubTab));
             }
             catch (Exception ex)
             {
@@ -1283,6 +1629,7 @@ namespace PlayniteAchievements.Services.UI
                 InvokeOnUiThread(() => OpenManageAchievementsViewCore(
                     gameId,
                     ManageAchievementsTab.Overrides,
+                    false,
                     control => control.SelectLocalFolderOverride()));
             }
             catch (Exception ex)
@@ -1297,9 +1644,14 @@ namespace PlayniteAchievements.Services.UI
         private void OpenManageAchievementsViewCore(
             Guid gameId,
             ManageAchievementsTab initialTab,
-            Action<ManageAchievementsControl> configureView = null)
+            bool selectManageCategoriesSubTab = false,
+            Action<ManageAchievementsControl> configureControl = null)
         {
-            if (TryActivateManageAchievementsWindow(gameId, initialTab, configureView))
+            if (TryActivateManageAchievementsWindow(
+                gameId,
+                initialTab,
+                selectManageCategoriesSubTab,
+                configureControl))
             {
                 return;
             }
@@ -1330,9 +1682,9 @@ namespace PlayniteAchievements.Services.UI
                     _api,
                     _logger,
                     _settings,
-                    _manualSourceRegistry);
-
-                configureView?.Invoke(view);
+                    _manualSourceRegistry,
+                    selectManageCategoriesSubTab);
+                configureControl?.Invoke(view);
 
                 var windowOptions = new WindowOptions
                 {
@@ -1375,66 +1727,12 @@ namespace PlayniteAchievements.Services.UI
         {
             OpenManageAchievementsView(gameId, ManageAchievementsTab.Capstones);
         }
+
         public void OpenLocalAchievementsEditorView(Guid gameId)
         {
             try
             {
-                var isFullscreen = DetectFullscreenMode();
-
-                var game = _api?.Database?.Games?.Get(gameId);
-                if (game == null)
-                {
-                    _api?.Dialogs?.ShowErrorMessage(
-                        ResourceProvider.GetString("LOCPlayAch_Text_UnknownGame"),
-                        ResourceProvider.GetString("LOCPlayAch_Title_PluginName"));
-                    return;
-                }
-
-                _ensureAchievementResourcesLoaded?.Invoke();
-
-                var localProvider = _refreshService?.Providers?.OfType<LocalSavesProvider>().FirstOrDefault();
-                var viewModel = new LocalAchievementEditorViewModel(
-                    gameId,
-                    _cacheManager,
-                    localProvider,
-                    _api,
-                    _logger,
-                    _settings);
-
-                var view = new LocalAchievementEditorControl(viewModel);
-
-                var windowOptions = new WindowOptions
-                {
-                    ShowMinimizeButton = true,
-                    ShowMaximizeButton = true,
-                    ShowCloseButton = true,
-                    CanBeResizable = true,
-                    Width = 1100,
-                    Height = 760
-                };
-
-                var window = PlayniteUiProvider.CreateExtensionWindow(
-                    view.WindowTitle,
-                    view,
-                    windowOptions,
-                    isFullscreen);
-
-                window.MinWidth = 900;
-                window.MinHeight = 620;
-
-                try
-                {
-                    if (window.Owner == null)
-                    {
-                        window.Owner = _api?.Dialogs?.GetCurrentAppWindow();
-                    }
-                }
-                catch
-                {
-                }
-
-                window.Closed += (s, e) => view.Cleanup();
-                ShowWindow(window, isFullscreen);
+                InvokeOnUiThread(() => OpenLocalAchievementsEditorViewCore(gameId));
             }
             catch (Exception ex)
             {
@@ -1443,6 +1741,51 @@ namespace PlayniteAchievements.Services.UI
                     $"Failed to open local achievements editor: {ex.Message}",
                     "Playnite Achievements");
             }
+        }
+
+        private void OpenLocalAchievementsEditorViewCore(Guid gameId)
+        {
+            var isFullscreen = DetectFullscreenMode();
+            var game = _api?.Database?.Games?.Get(gameId);
+            if (game == null)
+            {
+                _api?.Dialogs?.ShowErrorMessage(
+                    ResourceProvider.GetString("LOCPlayAch_Text_UnknownGame"),
+                    ResourceProvider.GetString("LOCPlayAch_Title_PluginName"));
+                return;
+            }
+
+            var localProvider = _refreshService?.Providers?.OfType<LocalSavesProvider>().FirstOrDefault();
+            var viewModel = new LocalAchievementEditorViewModel(
+                gameId,
+                _cacheManager,
+                localProvider,
+                _api,
+                _logger,
+                _settings);
+            var view = new LocalAchievementEditorControl(viewModel);
+            var window = CreateManagedPopoutWindow(
+                view.WindowTitle,
+                view,
+                new WindowOptions
+                {
+                    ShowMinimizeButton = true,
+                    ShowMaximizeButton = true,
+                    ShowCloseButton = true,
+                    CanBeResizable = true,
+                    Width = 1100,
+                    Height = 760
+                },
+                isFullscreen,
+                LocalAchievementEditorWindowPlacementKey,
+                configureWindow: createdWindow =>
+                {
+                    createdWindow.MinWidth = 900;
+                    createdWindow.MinHeight = 620;
+                },
+                closed: view.Cleanup);
+
+            ShowWindow(window, isFullscreen);
         }
 
         public void OpenParityTestView(Guid gameId, bool modern)
@@ -1494,66 +1837,6 @@ namespace PlayniteAchievements.Services.UI
                     $"Failed to open parity test view: {ex.Message}",
                     ResourceProvider.GetString("LOCPlayAch_Title_PluginName"));
             }
-        }
-
-        public void EnsureAchievementResourcesLoaded()
-        {
-            try
-            {
-                var app = Application.Current;
-                if (app == null)
-                {
-                    return;
-                }
-
-                void LoadResources()
-                {
-                    EnsureMergedDictionaryLoaded(app.Resources, "/PlayniteAchievements;component/Resources/RarityBadges.xaml");
-                    EnsureMergedDictionaryLoaded(app.Resources, "/PlayniteAchievements;component/Resources/TrophyBadges.xaml");
-                    EnsureMergedDictionaryLoaded(app.Resources, "/PlayniteAchievements;component/Resources/AchievementTemplates.xaml");
-                    EnsureMergedDictionaryLoaded(app.Resources, "/PlayniteAchievements;component/Providers/ProviderIcons.xaml");
-                    EnsureMergedDictionaryLoaded(app.Resources, "/PlayniteAchievements;component/Resources/MigrationStyles.xaml");
-                    PercentRarityHelper.ApplyBadgeApplicationResources(
-                        _settings?.Persisted?.UseUniformRarityBadges ?? false);
-                }
-
-                if (app.Dispatcher.CheckAccess())
-                {
-                    LoadResources();
-                }
-                else
-                {
-                    app.Dispatcher.Invoke(LoadResources, DispatcherPriority.Normal);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.Debug(ex, "Failed to load achievement resources at application level.");
-            }
-        }
-
-        private static void EnsureMergedDictionaryLoaded(ResourceDictionary resources, string relativeUri)
-        {
-            if (resources == null || string.IsNullOrWhiteSpace(relativeUri))
-            {
-                return;
-            }
-
-            var targetUri = new Uri(relativeUri, UriKind.Relative);
-            foreach (var dictionary in resources.MergedDictionaries)
-            {
-                if (dictionary?.Source == null)
-                {
-                    continue;
-                }
-
-                if (Uri.Compare(dictionary.Source, targetUri, UriComponents.SerializationInfoString, UriFormat.SafeUnescaped, StringComparison.OrdinalIgnoreCase) == 0)
-                {
-                    return;
-                }
-            }
-
-            resources.MergedDictionaries.Add(new ResourceDictionary { Source = targetUri });
         }
 
         [DllImport("user32.dll")]

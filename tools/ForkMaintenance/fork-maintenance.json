@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "defaultBaseline": "upstream/main",
+  "protectedPaths": [
+    "README.md",
+    "source/extension.yaml",
+    "InstallerManifest.yaml"
+  ],
+  "excludedPaths": [
+    "tools/ForkMaintenance",
+    "source/bin",
+    "source/obj",
+    "tests/TestResults"
+  ],
+  "semanticLocalizationGlob": "source/Localization/*.xaml",
+  "bundleDirectory": "bundle"
+}

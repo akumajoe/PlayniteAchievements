@@ -72,6 +72,81 @@ namespace PlayniteAchievements.Steam.Tests
         }
 
         [TestMethod]
+        public async Task GetOwnedGamesAsync_UsesAccessTokenEndpoint_AndMapsGames()
+        {
+            Uri capturedUri = null;
+            using var httpClient = new HttpClient(new StubHttpMessageHandler(request =>
+            {
+                capturedUri = request.RequestUri;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{ \"response\": { \"game_count\": 1, \"games\": [ { " +
+                        "\"appid\": 570, " +
+                        "\"name\": \"Dota 2\", " +
+                        "\"playtime_forever\": 120, " +
+                        "\"playtime_2weeks\": 15, " +
+                        "\"rtime_last_played\": 1710000000 } ] } }",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }));
+
+            var client = new SteamApiClient(httpClient, logger: null);
+            var result = await client.GetOwnedGamesAsync("store-token", "76561198000000001", CancellationToken.None).ConfigureAwait(false);
+
+            Assert.IsNotNull(result);
+            Assert.AreEqual(1, result.Count);
+            Assert.IsNotNull(capturedUri);
+            Assert.AreEqual("/IPlayerService/GetOwnedGames/v1/", capturedUri.AbsolutePath);
+            StringAssert.Contains(capturedUri.Query, "access_token=store-token");
+            StringAssert.Contains(capturedUri.Query, "steamid=76561198000000001");
+            StringAssert.Contains(capturedUri.Query, "include_appinfo=true");
+            StringAssert.Contains(capturedUri.Query, "include_played_free_games=true");
+
+            var game = result.Single();
+            Assert.AreEqual(570, game.AppId);
+            Assert.AreEqual("Dota 2", game.Name);
+            Assert.AreEqual(120, game.PlaytimeForever);
+            Assert.AreEqual(15, game.Playtime2Weeks);
+            Assert.AreEqual(1710000000L, game.LastPlayedUnixSeconds);
+        }
+
+        [TestMethod]
+        public async Task GetOwnedGamesAsync_ReturnsEmptyList_WhenApiReportsZeroGames()
+        {
+            using var httpClient = new HttpClient(new StubHttpMessageHandler(_ =>
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{ \"response\": { \"game_count\": 0 } }",
+                        Encoding.UTF8,
+                        "application/json")
+                }));
+
+            var client = new SteamApiClient(httpClient, logger: null);
+            var result = await client.GetOwnedGamesAsync("store-token", "76561198000000001", CancellationToken.None).ConfigureAwait(false);
+
+            Assert.IsNotNull(result);
+            Assert.AreEqual(0, result.Count);
+        }
+
+        [TestMethod]
+        public async Task GetOwnedGamesAsync_ReturnsNull_OnNonSuccessResponse()
+        {
+            using var httpClient = new HttpClient(new StubHttpMessageHandler(_ =>
+                new HttpResponseMessage(HttpStatusCode.Forbidden)
+                {
+                    Content = new StringContent(string.Empty)
+                }));
+
+            var client = new SteamApiClient(httpClient, logger: null);
+            var result = await client.GetOwnedGamesAsync("store-token", "76561198000000001", CancellationToken.None).ConfigureAwait(false);
+
+            Assert.IsNull(result);
+        }
+
+        [TestMethod]
         public async Task GetSchemaForGameDetailedAsync_TrimsLocalizedText_AndBuildsIconUrls()
         {
             using var httpClient = new HttpClient(new StubHttpMessageHandler(_ =>
@@ -101,12 +176,95 @@ namespace PlayniteAchievements.Steam.Tests
             Assert.AreEqual("TLAD: Easy Rider", achievement.DisplayName);
             Assert.AreEqual("Finish the story. (The Lost and Damned)", achievement.Description);
             Assert.AreEqual(
-                "https://shared.fastly.steamstatic.com/community_assets/images/apps/12210/8a72778b9ede9c31a444cdf493666457b8238718.jpg",
+                "https://shared.akamai.steamstatic.com/community_assets/images/apps/12210/8a72778b9ede9c31a444cdf493666457b8238718.jpg",
                 achievement.Icon);
             Assert.AreEqual(
-                "https://shared.fastly.steamstatic.com/community_assets/images/apps/12210/8a72778b9ede9c31a444cdf493666457b8238718.jpg",
+                "https://shared.akamai.steamstatic.com/community_assets/images/apps/12210/8a72778b9ede9c31a444cdf493666457b8238718.jpg",
                 achievement.IconGray);
             Assert.AreEqual(5.1d, result.GlobalPercentages["E1FINISHSTORY"]);
+        }
+
+        [TestMethod]
+        public async Task GetSchemaForGameDetailedAsync_UsesConfiguredLanguageForHiddenText()
+        {
+            Uri localizedSchemaUri = null;
+            using var httpClient = new HttpClient(new StubHttpMessageHandler(request =>
+            {
+                if (request.RequestUri.AbsolutePath.Contains("/ISteamUserStats/GetSchemaForGame/"))
+                {
+                    localizedSchemaUri = request.RequestUri;
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            "{ \"response\": { \"game\": { \"availableGameStats\": { \"achievements\": [" +
+                            "{ \"name\": \"SECRET_1\", \"displayName\": \"Секрет\", \"description\": \"Скрытое описание\", \"hidden\": 1 }," +
+                            "{ \"name\": \"VISIBLE_1\", \"displayName\": \"Видимое\", \"description\": \"Видимое описание\", \"hidden\": 0 }" +
+                            "] } } } }",
+                            Encoding.UTF8,
+                            "application/json")
+                    };
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{ \"response\": { \"achievements\": [" +
+                        "{ \"internal_name\": \"SECRET_1\", \"localized_name\": \"Secret\", \"localized_desc\": \"English hidden description\", \"hidden\": true }," +
+                        "{ \"internal_name\": \"VISIBLE_1\", \"localized_name\": \"Already localized\", \"localized_desc\": \"Already localized description\", \"hidden\": false }" +
+                        "] } }",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }));
+
+            var client = new SteamApiClient(httpClient, logger: null);
+            var result = await client.GetSchemaForGameDetailedAsync(
+                "session-token",
+                123,
+                "russian",
+                CancellationToken.None).ConfigureAwait(false);
+
+            Assert.IsNotNull(localizedSchemaUri);
+            StringAssert.Contains(localizedSchemaUri.Query, "access_token=session-token");
+            StringAssert.Contains(localizedSchemaUri.Query, "l=russian");
+            Assert.AreEqual("Секрет", result.Achievements.Single(item => item.Name == "SECRET_1").DisplayName);
+            Assert.AreEqual("Скрытое описание", result.Achievements.Single(item => item.Name == "SECRET_1").Description);
+            Assert.AreEqual("Already localized description", result.Achievements.Single(item => item.Name == "VISIBLE_1").Description);
+        }
+
+        [TestMethod]
+        public async Task GetPublicSchemaForGameDetailedAsync_UsesLanguageWithoutCredential()
+        {
+            Uri capturedUri = null;
+            using var httpClient = new HttpClient(new StubHttpMessageHandler(request =>
+            {
+                capturedUri = request.RequestUri;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{ \"response\": { \"achievements\": [ { " +
+                        "\"internal_name\": \"SECRET_1\", " +
+                        "\"localized_name\": \"Vais Precisar de Ajuda\", " +
+                        "\"localized_desc\": \"Conclui Tensão Superficial\", " +
+                        "\"hidden\": true } ] } }",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }));
+
+            var client = new SteamApiClient(httpClient, logger: null);
+            var result = await client.GetPublicSchemaForGameDetailedAsync(
+                2651280,
+                "portuguese",
+                CancellationToken.None).ConfigureAwait(false);
+
+            Assert.IsNotNull(capturedUri);
+            Assert.AreEqual("/IPlayerService/GetGameAchievements/v1/", capturedUri.AbsolutePath);
+            StringAssert.Contains(capturedUri.Query, "appid=2651280");
+            StringAssert.Contains(capturedUri.Query, "language=portuguese");
+            Assert.IsFalse(capturedUri.Query.Contains("access_token="));
+            Assert.AreEqual("Conclui Tensão Superficial", result.Achievements.Single().Description);
+            Assert.AreEqual(1, result.Achievements.Single().Hidden);
         }
 
         private sealed class StubHttpMessageHandler : HttpMessageHandler

@@ -11,6 +11,8 @@
     <RootNamespace>PlayniteAchievements</RootNamespace>
     <AssemblyName>PlayniteAchievements</AssemblyName>
     <TargetFrameworkVersion>v4.6.2</TargetFrameworkVersion>
+    <!-- Enables consuming the WinRT winmd references (Windows.Graphics.Capture) at net462. -->
+    <TargetPlatformVersion>10.0.19041.0</TargetPlatformVersion>
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
     <PathMap>$(MSBuildProjectDirectory)=/PlayniteAchievements/source</PathMap>
@@ -30,13 +32,26 @@
     <LangVersion>preview</LangVersion>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
+    <!-- No symbols in the packed .pext: the .pdb was 3.58 MB of a 10.36 MB package, and logged
+         exceptions are overwhelmingly environmental (HTTP/socket/IO/JSON), where the exception type
+         and the method name in the trace are the whole diagnosis. Traces still carry exception type,
+         message, inner exceptions, and namespace-qualified method names; only the trailing
+         "in [file]:line N" is lost. DebugType=portable is NOT an alternative: .NET Framework cannot
+         read portable PDBs, so it drops line numbers anyway at a fifth of the size. Build Debug to
+         get symbols while developing. -->
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <LangVersion>preview</LangVersion>
+    <!-- Release output is what Toolbox packs into the .pext. Suppress the .pdb and IntelliSense .xml
+         files MSBuild otherwise copies next to each referenced assembly: neither is loaded at runtime,
+         and together they accounted for 1.59 MB of the 10.36 MB 3.1.2 package. This also cleared an
+         orphaned protobuf-net.pdb, whose DLL Toolbox already strips because Playnite provides it. -->
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
   </PropertyGroup>
   <ItemGroup>
     <!-- Plugin dependencies -->
@@ -46,6 +61,10 @@
     </Reference>
     <Reference Include="DiscUtils.Iso9660">
       <HintPath>packages\DiscUtils.Iso9660.0.16.13\lib\net45\DiscUtils.Iso9660.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="DiscUtils.Udf">
+      <HintPath>packages\DiscUtils.Udf.0.16.13\lib\net45\DiscUtils.Udf.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="DiscUtils.Streams">
@@ -64,6 +83,10 @@
       <HintPath>packages\LiveCharts.Wpf.0.9.7\lib\net45\LiveCharts.Wpf.dll</HintPath>
       <Private>True</Private>
     </Reference>
+    <Reference Include="NAudio">
+      <HintPath>packages\NAudio.1.10.0\lib\net35\NAudio.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="Microsoft.Web.WebView2.Core">
       <HintPath>packages\Microsoft.Web.WebView2.1.0.2592.51\lib\net462\Microsoft.Web.WebView2.Core.dll</HintPath>
       <Private>True</Private>
@@ -77,13 +100,53 @@
       <Private>True</Private>
     </Reference>
     <Reference Include="protobuf-net">
-      <HintPath>packages\protobuf-net.2.4.8\lib\net452\protobuf-net.dll</HintPath>
+      <HintPath>packages\protobuf-net.2.0.0.668\lib\net40\protobuf-net.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="SharpCompress">
       <HintPath>packages\SharpCompress.0.26.0\lib\net46\SharpCompress.dll</HintPath>
       <Private>True</Private>
     </Reference>
+    <!-- D3D11 device + texture read-back for WGC HDR capture (Services\Capture). -->
+    <Reference Include="SharpDX">
+      <HintPath>packages\SharpDX.4.2.0\lib\net45\SharpDX.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="SharpDX.Direct3D11">
+      <HintPath>packages\SharpDX.Direct3D11.4.2.0\lib\net45\SharpDX.Direct3D11.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="SharpDX.DXGI">
+      <HintPath>packages\SharpDX.DXGI.4.2.0\lib\net45\SharpDX.DXGI.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="SharpDX.D3DCompiler">
+      <HintPath>packages\SharpDX.D3DCompiler.4.2.0\lib\net45\SharpDX.D3DCompiler.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <!-- Media Foundation H.264 encode (GPU-resident) for WGC unlock video. -->
+    <Reference Include="SharpDX.Mathematics">
+      <HintPath>packages\SharpDX.Mathematics.4.2.0\lib\net45\SharpDX.Mathematics.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="SharpDX.MediaFoundation">
+      <HintPath>packages\SharpDX.MediaFoundation.4.2.0\lib\net45\SharpDX.MediaFoundation.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <!-- WinRT projections for Windows.Graphics.Capture (WGC). The winmds are compile-time metadata
+         (Private=False: the OS provides the types at runtime); System.Runtime.WindowsRuntime carries
+         the projection glue (IAsyncOperation/AsTask, WinRT events). Requires TargetPlatformVersion. -->
+    <Reference Include="Windows.Foundation.FoundationContract">
+      <HintPath>packages\Microsoft.Windows.SDK.Contracts.10.0.19041.1\ref\netstandard2.0\Windows.Foundation.FoundationContract.winmd</HintPath>
+      <IsWinMDFile>true</IsWinMDFile>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Windows.Foundation.UniversalApiContract">
+      <HintPath>packages\Microsoft.Windows.SDK.Contracts.10.0.19041.1\ref\netstandard2.0\Windows.Foundation.UniversalApiContract.winmd</HintPath>
+      <IsWinMDFile>true</IsWinMDFile>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.Runtime.WindowsRuntime" />
     <Reference Include="System.Numerics" />
     <Reference Include="System.ValueTuple">
       <HintPath>packages\System.ValueTuple.4.5.0\lib\net461\System.ValueTuple.dll</HintPath>
@@ -91,6 +154,10 @@
     </Reference>
     <Reference Include="VirtualizingWrapPanel, Version=1.5.4.0, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>packages\VirtualizingWrapPanel.1.5.4\lib\net45\VirtualizingWrapPanel.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="XamlAnimatedGif">
+      <HintPath>packages\XamlAnimatedGif.2.3.2\lib\net45\XamlAnimatedGif.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="Playnite.SDK, Version=6.14.0.0, Culture=neutral, processorArchitecture=MSIL">
@@ -109,8 +176,6 @@
     <Reference Include="PresentationFramework" />
     <Reference Include="WindowsBase" />
     <Reference Include="System.Xaml" />
-    <Reference Include="System.Drawing" />
-    <Reference Include="System.Windows.Forms" />
     <Reference Include="System.IO.Compression" />
     <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.Net.Http" />
@@ -119,15 +184,44 @@
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
     <Reference Include="System.Security" />
+    <Reference Include="System.Windows.Forms" />
     <Reference Include="mscorlib" />
     <Reference Include="Microsoft.CSharp" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="**\*.cs" Exclude="bin\**;obj\**;packages\**;**\*.g.cs;**\*.g.i.cs" />
+    <!-- Helper is its own exe project (see below); its sources must not compile into the plugin. -->
+    <Content Include="packages\Microsoft.Web.WebView2.1.0.2592.51\runtimes\win-x86\native\WebView2Loader.dll">
+      <Link>x86\WebView2Loader.dll</Link>
+      <TargetPath>x86\WebView2Loader.dll</TargetPath>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="packages\Microsoft.Web.WebView2.1.0.2592.51\runtimes\win-x64\native\WebView2Loader.dll">
+      <Link>x64\WebView2Loader.dll</Link>
+      <TargetPath>x64\WebView2Loader.dll</TargetPath>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Compile Include="**\*.cs" Exclude="bin\**;obj\**;Helper\**;packages\**;**\*.g.cs;**\*.g.i.cs" />
   </ItemGroup>
   <ItemGroup>
-    <Page Include="**\*.xaml" Exclude="bin\**;obj\**;Localization\**\*.xaml">
+    <!-- Builds the unlock-sound host before this project (ReferenceOutputAssembly=false: the plugin
+         never references the exe) and ships only its exe as loose content beside the plugin dll, so
+         Toolbox packs it. No second NAudio.dll and no .pdb come along; the copy is tracked by
+         FileWrites so Clean removes it. -->
+    <ProjectReference Include="Helper\PlayniteAchievements.Helper.csproj">
+      <Project>{7A2E4C51-9B3D-4F6E-8C1A-2D5F7E9B0C43}</Project>
+      <Name>PlayniteAchievements.Helper</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+    <Content Include="Helper\bin\$(Configuration)\PlayniteAchievementsHelper.exe">
+      <Link>PlayniteAchievementsHelper.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <Page Include="**\*.xaml" Exclude="bin\**;obj\**;Localization\**\*.xaml;Resources\DefaultTemplates\**\*.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
@@ -147,25 +241,16 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <Resource Include="Resources\BrandingIcon.png" />
     <Resource Include="Resources\HiddenAchIcon.png" />
     <Resource Include="Resources\UnlockedAchIcon.png" />
-    <Content Include="Resources\HiddenAchIcon.png">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <!-- UnlockedAchIcon is needed as a loose file too: HoyoverseDefinitionClient resolves it by path
+         as the icon fallback. HiddenAchIcon is only ever loaded through its pack:// URI, so it ships
+         as a Resource alone. -->
     <Content Include="Resources\UnlockedAchIcon.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Resources\Sounds\**\*.wav">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="packages\Microsoft.Web.WebView2.1.0.2592.51\runtimes\win-x86\native\WebView2Loader.dll">
-      <Link>x86\WebView2Loader.dll</Link>
-      <TargetPath>x86\WebView2Loader.dll</TargetPath>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="packages\Microsoft.Web.WebView2.1.0.2592.51\runtimes\win-x64\native\WebView2Loader.dll">
-      <Link>x64\WebView2Loader.dll</Link>
-      <TargetPath>x64\WebView2Loader.dll</TargetPath>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="..\tools\notification-template-builder.html">
@@ -214,11 +299,24 @@
     <Content Include="Resources\Hoyoverse\**\*.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- Bundled unlock sounds ship as loose files: the sound host process opens them by path. -->
+    <Content Include="Resources\Sounds\*.mp3;Resources\Sounds\notices.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Providers\RetroAchievements\PlatformMapping\console-mappings.json" />
     <EmbeddedResource Include="Providers\Hoyoverse\Data\starrailstation.json">
       <LogicalName>PlayniteAchievements.Providers.Hoyoverse.Data.starrailstation.json</LogicalName>
+    </EmbeddedResource>
+    <!-- Single-source default notification templates: rendered at runtime AND returned by the
+         "Export default template" action. Embedded (not Page) so the resolver can read the raw
+         XAML text; excluded from the Page glob above. -->
+    <EmbeddedResource Include="Resources\DefaultTemplates\AchievementToast.xaml">
+      <LogicalName>PlayniteAchievements.Resources.DefaultTemplates.AchievementToast.xaml</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\DefaultTemplates\ScreenshotFrame.xaml">
+      <LogicalName>PlayniteAchievements.Resources.DefaultTemplates.ScreenshotFrame.xaml</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
   <PropertyGroup>

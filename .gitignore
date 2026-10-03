@@ -79,6 +79,16 @@ DatabasePlan.md
 wiki/
 PlayniteAchievementsWiki/
 PlayniteAchievements.code-workspace
+# Working notes (local only)
+docs/
+
+# Local build output, packaged extensions, and crash artifacts
+artifacts/
+# MSBuild WPF temporary projects
+*_wpftmp.csproj
+
+# Local reference clones
+external/
 merge-conflict-backups/*
 tools/NotificationTemplates/SAN Videos
 extract_san_video_frames.py
@@ -106,3 +116,4 @@ tools/SAN-installed-extracted
 tools/NotificationTemplates/Icons
 Test*.json
 merge-conflict-backup/*
+.worktrees/

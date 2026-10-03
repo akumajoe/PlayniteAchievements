@@ -4,9 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using Playnite.SDK;
+using PlayniteAchievements.Models.Achievements;
 
 namespace PlayniteAchievements.Services.Images
 {
@@ -41,6 +40,18 @@ namespace PlayniteAchievements.Services.Images
                 gameId,
                 fileStem,
                 variant);
+            return Path.Combine(
+                Path.GetDirectoryName(_diskImageService.GetCacheDirectoryPath()) ?? string.Empty,
+                relativePath);
+        }
+
+        public string GetCategoryCustomImagePath(
+            string gameId,
+            string fileStem)
+        {
+            var relativePath = AchievementIconCachePathBuilder.BuildCustomCategoryRelativePath(
+                gameId,
+                fileStem);
             return Path.Combine(
                 Path.GetDirectoryName(_diskImageService.GetCacheDirectoryPath()) ?? string.Empty,
                 relativePath);
@@ -144,6 +155,40 @@ namespace PlayniteAchievements.Services.Images
             }
         }
 
+        /// <summary>
+        /// Turns a stored category art override into a path a surface can render. Callers reach
+        /// this through <see cref="CategoryArtChainResolver.OverrideDisplayPathResolver"/>, so
+        /// every surface resolves an override the same way.
+        ///
+        /// The managed-path step is idempotent: hydration already resolves the overrides carried on
+        /// game data, while the cached-summary path passes stored values through raw, and an
+        /// already-rooted path is returned unchanged.
+        /// </summary>
+        internal string ResolveCategoryArtDisplayPath(
+            string storedValue,
+            Guid? playniteGameId,
+            CategoryArtDisplayMode displayMode)
+        {
+            var normalized = NormalizePath(storedValue);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return null;
+            }
+
+            var resolved = playniteGameId.HasValue
+                ? ResolveManagedDisplayPath(normalized, playniteGameId.Value.ToString("D"))
+                : normalized;
+
+            // Category graphics are overwritten in place at a stable managed path, so a surface
+            // rendering through the plugin's image pipeline needs the cache-bust token or it keeps
+            // serving the bitmap from before the replacement. The theme surface deliberately does
+            // not get the token: it is a public contract that theme XAML may bind straight to an
+            // Image, which would not understand the encoding.
+            return displayMode == CategoryArtDisplayMode.PluginImagePipeline
+                ? AchievementIconResolver.ApplyCacheBust(resolved)
+                : resolved;
+        }
+
         public string ResolveManagedDisplayPath(string value, string gameId)
         {
             var normalized = NormalizePath(value);
@@ -223,73 +268,68 @@ namespace PlayniteAchievements.Services.Images
                 .ConfigureAwait(false);
         }
 
-        public Task<string> MaterializeGrayscaleCustomIconAsync(
+        public Task<string> MaterializeCategoryImageAsync(
             string sourcePath,
             string gameId,
             string fileStem,
-            AchievementIconVariant variant,
             CancellationToken cancel,
             bool overwriteExistingTarget = false)
         {
-            if (string.IsNullOrWhiteSpace(sourcePath) ||
-                !File.Exists(sourcePath) ||
-                string.IsNullOrWhiteSpace(fileStem))
+            if (string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(fileStem))
             {
                 return Task.FromResult<string>(null);
             }
 
-            var targetPath = GetAchievementCustomIconPath(gameId, fileStem, variant);
-            if (!overwriteExistingTarget && File.Exists(targetPath))
+            var targetPath = GetCategoryCustomImagePath(gameId, fileStem);
+            return MaterializeImageToPathAsync(
+                sourcePath,
+                targetPath,
+                cancel,
+                overwriteExistingTarget);
+        }
+
+        private async Task<string> MaterializeImageToPathAsync(
+            string sourcePath,
+            string targetPath,
+            CancellationToken cancel,
+            bool overwriteExistingTarget)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(targetPath))
             {
-                return Task.FromResult(targetPath);
+                return null;
             }
 
-            try
+            if (string.Equals(sourcePath.Trim(), targetPath, StringComparison.OrdinalIgnoreCase) &&
+                File.Exists(targetPath))
             {
-                cancel.ThrowIfCancellationRequested();
-                var targetDirectory = Path.GetDirectoryName(targetPath);
-                if (!string.IsNullOrWhiteSpace(targetDirectory))
-                {
-                    Directory.CreateDirectory(targetDirectory);
-                }
-
-                BitmapSource sourceBitmap;
-                using (var stream = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                {
-                    var bitmap = new BitmapImage();
-                    bitmap.BeginInit();
-                    bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                    bitmap.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-                    bitmap.StreamSource = stream;
-                    bitmap.EndInit();
-                    bitmap.Freeze();
-                    sourceBitmap = bitmap;
-                }
-
-                if (sourceBitmap == null)
-                {
-                    return Task.FromResult<string>(null);
-                }
-
-                var grayBitmap = ConvertToGrayscale(sourceBitmap);
-                var encoder = new PngBitmapEncoder();
-                encoder.Frames.Add(BitmapFrame.Create(grayBitmap));
-                using (var output = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.Read))
-                {
-                    encoder.Save(output);
-                }
-
-                return Task.FromResult(targetPath);
+                return targetPath;
             }
-            catch (OperationCanceledException)
+
+            if (IsHttpUrl(sourcePath))
             {
-                throw;
+                return await _diskImageService
+                    .GetOrDownloadIconToPathAsync(
+                        sourcePath,
+                        targetPath,
+                        decodeSize: 0,
+                        cancel,
+                        overwriteExistingTarget: overwriteExistingTarget)
+                    .ConfigureAwait(false);
             }
-            catch (Exception ex)
+
+            if (!File.Exists(sourcePath))
             {
-                _logger?.Warn(ex, $"Failed to materialize grayscale custom icon from '{sourcePath}'.");
-                return Task.FromResult<string>(null);
+                return null;
             }
+
+            return await _diskImageService
+                .GetOrCopyLocalIconToPathAsync(
+                    sourcePath,
+                    targetPath,
+                    decodeSize: 0,
+                    cancel,
+                    overwriteExistingTarget: overwriteExistingTarget)
+                .ConfigureAwait(false);
         }
 
         public void ClearGameCustomCache(string gameId)
@@ -349,7 +389,11 @@ namespace PlayniteAchievements.Services.Images
                 }
             }
 
-            foreach (var file in Directory.EnumerateFiles(customDirectory, "*.png", SearchOption.AllDirectories))
+            // Custom icons keep their source format, so a "*.png" sweep left every other format
+            // behind forever. Enumerate everything and filter by recognized extension instead.
+            foreach (var file in Directory
+                .EnumerateFiles(customDirectory, "*", SearchOption.AllDirectories)
+                .Where(candidate => ImageFormats.HasSupportedExtension(candidate)))
             {
                 try
                 {
@@ -388,51 +432,6 @@ namespace PlayniteAchievements.Services.Images
                 : directoryPath + Path.DirectorySeparatorChar;
 
             return candidatePath.StartsWith(normalizedDirectory, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static BitmapSource ConvertToGrayscale(BitmapSource source)
-        {
-            if (source == null)
-            {
-                return null;
-            }
-
-            BitmapSource bgraSource = source;
-            if (bgraSource.Format != PixelFormats.Bgra32)
-            {
-                bgraSource = new FormatConvertedBitmap(bgraSource, PixelFormats.Bgra32, null, 0);
-                bgraSource.Freeze();
-            }
-
-            var width = bgraSource.PixelWidth;
-            var height = bgraSource.PixelHeight;
-            var stride = width * 4;
-            var pixels = new byte[stride * height];
-            bgraSource.CopyPixels(pixels, stride, 0);
-
-            for (var i = 0; i < pixels.Length; i += 4)
-            {
-                var b = pixels[i + 0];
-                var g = pixels[i + 1];
-                var r = pixels[i + 2];
-
-                var gray = (byte)Math.Min(255, (int)(0.114 * b + 0.587 * g + 0.299 * r));
-                pixels[i + 0] = gray;
-                pixels[i + 1] = gray;
-                pixels[i + 2] = gray;
-            }
-
-            var result = BitmapSource.Create(
-                width,
-                height,
-                bgraSource.DpiX,
-                bgraSource.DpiY,
-                PixelFormats.Bgra32,
-                null,
-                pixels,
-                stride);
-            result.Freeze();
-            return result;
         }
 
         private string GetCacheRootDirectory()

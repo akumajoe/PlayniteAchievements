@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using Playnite.SDK;
+using PlayniteAchievements.Models;
 using PlayniteAchievements.Models.Achievements;
 using PlayniteAchievements.Models.Settings;
+using PlayniteAchievements.Services.Achievements;
+using PlayniteAchievements.Services.GameCustomData;
 using PlayniteAchievements.Services.Images;
 using PlayniteAchievements.Services;
-using PlayniteAchievements.Providers.Local;
 
 namespace PlayniteAchievements.Services.Hydration
 {
@@ -16,20 +18,24 @@ namespace PlayniteAchievements.Services.Hydration
     public class GameDataHydrator
     {
         private readonly IPlayniteAPI _api;
-        private readonly PersistedSettings _settings;
+        // The settings wrapper, not its PersistedSettings: CancelEdit replaces the
+        // Persisted instance, and this hydrator outlives a settings dialog.
+        private readonly PlayniteAchievementsSettings _settingsHost;
         private readonly GameCustomDataStore _gameCustomDataStore;
         private readonly AchievementDetailHydrator _achievementHydrator;
 
         public GameDataHydrator(
             IPlayniteAPI api,
-            PersistedSettings settings,
+            PlayniteAchievementsSettings settings,
             GameCustomDataStore gameCustomDataStore = null)
         {
             _api = api ?? throw new ArgumentNullException(nameof(api));
-            _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+            _settingsHost = settings ?? throw new ArgumentNullException(nameof(settings));
             _gameCustomDataStore = gameCustomDataStore;
             _achievementHydrator = new AchievementDetailHydrator(settings);
         }
+
+        private PersistedSettings Persisted => _settingsHost.Persisted;
 
         /// <summary>
         /// Hydrates a single GameAchievementData with non-persisted properties.
@@ -42,7 +48,7 @@ namespace PlayniteAchievements.Services.Hydration
             }
 
             var gameId = data.PlayniteGameId.Value;
-            var customData = GameCustomDataLookup.ResolveGameCustomData(gameId, _settings, _gameCustomDataStore);
+            var customData = GameCustomDataLookup.ResolveGameCustomData(gameId, Persisted, _gameCustomDataStore);
 
             // Populate ExcludedByUser from settings
             data.ExcludedByUser = customData.ExcludedFromRefreshes;
@@ -59,6 +65,19 @@ namespace PlayniteAchievements.Services.Hydration
             {
                 data.AchievementOrder = configuredOrder;
             }
+
+            data.GoalAchievements = customData.GoalAchievementApiNames != null && customData.GoalAchievementApiNames.Count > 0
+                ? new List<string>(customData.GoalAchievementApiNames)
+                : null;
+
+            data.AchievementCategoryOrder = customData.AchievementCategoryOrder != null && customData.AchievementCategoryOrder.Count > 0
+                ? new List<string>(customData.AchievementCategoryOrder)
+                : null;
+            data.AchievementCategoryImageOverrides = customData.AchievementCategoryImageOverrides != null &&
+                                                     customData.AchievementCategoryImageOverrides.Count > 0
+                ? CloneCategoryImageOverrideMap(customData.AchievementCategoryImageOverrides, gameId)
+                : null;
+            data.GameSummaryCategory = customData.GameSummaryCategory;
 
             // Hydrate achievements with settings overlays (capstone + category/category-type overrides).
             if (data.Achievements != null && data.Achievements.Count > 0)
@@ -85,11 +104,19 @@ namespace PlayniteAchievements.Services.Hydration
             }
 
             var gameId = data.PlayniteGameId.Value;
-            var customData = GameCustomDataLookup.ResolveGameCustomData(gameId, _settings, _gameCustomDataStore);
+            var customData = GameCustomDataLookup.ResolveGameCustomData(gameId, Persisted, _gameCustomDataStore);
 
             data.ExcludedFromSummaries = customData.ExcludedFromSummaries;
             data.UseSeparateLockedIconsWhenAvailable = customData.UseSeparateLockedIcons;
             data.Game = GetGame(gameId);
+            data.AchievementCategoryOrder = customData.AchievementCategoryOrder != null && customData.AchievementCategoryOrder.Count > 0
+                ? new List<string>(customData.AchievementCategoryOrder)
+                : null;
+            data.AchievementCategoryImageOverrides = customData.AchievementCategoryImageOverrides != null &&
+                                                     customData.AchievementCategoryImageOverrides.Count > 0
+                ? CloneCategoryImageOverrideMap(customData.AchievementCategoryImageOverrides, gameId)
+                : null;
+            data.GameSummaryCategory = customData.GameSummaryCategory;
 
             if (data.Achievements != null && data.Achievements.Count > 0)
             {
@@ -154,14 +181,8 @@ namespace PlayniteAchievements.Services.Hydration
                 return;
             }
 
-            // Do not apply icon overrides when the local custom schema is explicitly disabled.
-            if (LocalSavesProvider.TryGetCustomSchemaEnabledOverride(gameId, out var _csEnabled) && !_csEnabled)
-            {
-                return;
-            }
             var unlockedOverrides = GameCustomDataLookup.GetAchievementUnlockedIconOverrides(gameId);
             var lockedOverrides = GameCustomDataLookup.GetAchievementLockedIconOverrides(gameId);
-            var fetchIconsFromGame = GameCustomDataLookup.IsViewAchievementsIconFetchEnabled(gameId);
             if (!AchievementIconOverrideHelper.HasOverrides(unlockedOverrides, lockedOverrides))
             {
                 return;
@@ -179,42 +200,22 @@ namespace PlayniteAchievements.Services.Hydration
                     continue;
                 }
 
-                var unlockedOverride = default(string);
-                if (!achievement.HasSourceUnlockedIcon)
+                var unlockedOverride = AchievementIconOverrideHelper.GetOverrideValue(unlockedOverrides, apiName);
+                if (!string.IsNullOrWhiteSpace(unlockedOverride))
                 {
-                    unlockedOverride = AchievementIconOverrideHelper.GetExplicitOverrideValue(unlockedOverrides, apiName);
-                    if (string.IsNullOrWhiteSpace(unlockedOverride) &&
-                        !fetchIconsFromGame &&
-                        AchievementIconOverrideHelper.ShouldApplyDefaultOverride(achievement.UnlockedIconPath, isLockedIcon: false))
-                    {
-                        unlockedOverride = AchievementIconOverrideHelper.GetDefaultOverrideValue(unlockedOverrides);
-                    }
-                    if (!string.IsNullOrWhiteSpace(unlockedOverride))
-                    {
-                        achievement.UnlockedIconPath = ResolveIconOverridePath(
-                            unlockedOverride,
-                            gameIdText,
-                            managedCustomIconService);
-                    }
+                    achievement.UnlockedIconPath = ResolveIconOverridePath(
+                        unlockedOverride,
+                        gameIdText,
+                        managedCustomIconService);
                 }
 
-                var lockedOverride = default(string);
-                if (!achievement.HasSourceLockedIcon)
+                var lockedOverride = AchievementIconOverrideHelper.GetOverrideValue(lockedOverrides, apiName);
+                if (!string.IsNullOrWhiteSpace(lockedOverride))
                 {
-                    lockedOverride = AchievementIconOverrideHelper.GetExplicitOverrideValue(lockedOverrides, apiName);
-                    if (string.IsNullOrWhiteSpace(lockedOverride) &&
-                        !fetchIconsFromGame &&
-                        AchievementIconOverrideHelper.ShouldApplyDefaultOverride(achievement.LockedIconPath, isLockedIcon: true))
-                    {
-                        lockedOverride = AchievementIconOverrideHelper.GetDefaultOverrideValue(lockedOverrides);
-                    }
-                    if (!string.IsNullOrWhiteSpace(lockedOverride))
-                    {
-                        achievement.LockedIconPath = ResolveIconOverridePath(
-                            lockedOverride,
-                            gameIdText,
-                            managedCustomIconService);
-                    }
+                    achievement.LockedIconPath = ResolveIconOverridePath(
+                        lockedOverride,
+                        gameIdText,
+                        managedCustomIconService);
                 }
             }
         }
@@ -231,6 +232,35 @@ namespace PlayniteAchievements.Services.Hydration
             }
 
             return managedCustomIconService?.ResolveManagedDisplayPath(normalized, gameIdText) ?? normalized;
+        }
+
+        private static Dictionary<string, CategoryImageOverrideData> CloneCategoryImageOverrideMap(
+            IReadOnlyDictionary<string, CategoryImageOverrideData> source,
+            Guid gameId)
+        {
+            var result = new Dictionary<string, CategoryImageOverrideData>(StringComparer.OrdinalIgnoreCase);
+            if (source == null)
+            {
+                return result;
+            }
+
+            var managedCustomIconService = PlayniteAchievementsPlugin.Instance?.ManagedCustomIconService;
+            var gameIdText = gameId.ToString("D");
+            foreach (var pair in source)
+            {
+                var category = AchievementCategoryTypeHelper.NormalizeCategoryOrDefault(pair.Key);
+                if (string.IsNullOrWhiteSpace(category) || pair.Value == null)
+                {
+                    continue;
+                }
+
+                result[category] = new CategoryImageOverrideData
+                {
+                    Art = ResolveIconOverridePath(pair.Value.Art, gameIdText, managedCustomIconService)
+                };
+            }
+
+            return result;
         }
 
         private static string NormalizeText(string value)

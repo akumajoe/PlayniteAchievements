@@ -5,7 +5,6 @@ using System.Linq;
 using System.Diagnostics;
 using System.Media;
 using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Security;
 using System.Text;
 using System.Globalization;
@@ -30,6 +29,7 @@ using PlayniteAchievements.Models.Achievements;
 using PlayniteAchievements.Models.Achievements.Scoring;
 using PlayniteAchievements.Providers;
 using PlayniteAchievements.Providers.Local;
+using PlayniteAchievements.Services.Logging;
 
 namespace PlayniteAchievements.Services
 {
@@ -74,26 +74,37 @@ namespace PlayniteAchievements.Services
             WarmUpSanWebView2();
         }
 
-        public void ShowPeriodicStatus(string status)
+        private void LogAchievementNotificationDebug(string message)
         {
-            if (_settings?.Persisted?.EnableNotifications != true || !_settings.Persisted.NotifyPeriodicUpdates)
+            AchievementNotificationDebugLog.Info(message);
+        }
+
+        /// <summary>
+        /// Reports an unattended background refresh that fell short — a provider threw, a provider
+        /// needs re-authentication, or the run failed outright. A clean refresh says nothing, so
+        /// seeing this always means something wants attention rather than being routine noise.
+        /// There is no per-feature setting; only the plugin-wide notification switch silences it.
+        /// </summary>
+        public void ShowRefreshFailed(string status)
+        {
+            if (_settings?.Persisted?.EnableNotifications != true)
                 return;
 
             var title = ResourceProvider.GetString("LOCPlayAch_Title_PluginName");
             var text = string.IsNullOrWhiteSpace(status)
-                ? ResourceProvider.GetString("LOCPlayAch_Status_RefreshComplete")
+                ? ResourceProvider.GetString("LOCPlayAch_Error_RebuildFailed")
                 : status;
 
             try
             {
                 _api.Notifications.Add(new NotificationMessage(
-                    $"PlayniteAchievements-Periodic-{Guid.NewGuid()}",
+                    $"PlayniteAchievements-RefreshFailed-{Guid.NewGuid()}",
                     $"{title}\n{text}",
-                    NotificationType.Info));
+                    NotificationType.Error));
             }
             catch (Exception ex)
             {
-                _logger?.Debug(ex, "Failed to show periodic notification.");
+                _logger?.Debug(ex, "Failed to show refresh failure notification.");
             }
         }
 
@@ -255,6 +266,18 @@ namespace PlayniteAchievements.Services
             var localSettings = overrideLocalSettings ?? ProviderRegistry.Settings<LocalSettings>();
             var resolvedProviderKey = string.IsNullOrWhiteSpace(notificationProviderKey) ? "Local" : notificationProviderKey.Trim();
             var enableInAppNotification = localSettings?.EnableInAppUnlockNotifications != false;
+            if (localSettings?.EnableOverlayDebugLogging == true)
+            {
+                AchievementNotificationDebugLog.LogSettingsSnapshot(
+                    localSettings,
+                    _settings?.Persisted,
+                    "notification-dispatch");
+                LogAchievementNotificationDebug(
+                    $"Unlock batch received game='{gameName}', gameId='{game?.Id}', provider='{resolvedProviderKey}', " +
+                    $"inputCount='{unlockedAchievements?.Count ?? 0}', usableCount='{achievements.Count}', " +
+                    $"deliveryMode='{localSettings.UnlockNotificationDeliveryMode}', inAppNotification='{enableInAppNotification}', " +
+                    $"soundConfigured='{!string.IsNullOrWhiteSpace(customSoundPath)}', soundLeadMs='{localSettings.UnlockSoundLeadMilliseconds}'.");
+            }
 
             var title = ResourceProvider.GetString("LOCPlayAch_Notification_LocalUnlockTitle");
             if (string.IsNullOrWhiteSpace(title))
@@ -390,7 +413,8 @@ namespace PlayniteAchievements.Services
             string achievementDescription = null,
             int? achievementPoints = null,
             string achievementRarity = null,
-            string achievementTrophy = null)
+            string achievementTrophy = null,
+            int? forcedSanPreviewView = null)
         {
             var localSettings = overrideLocalSettings ?? ProviderRegistry.Settings<LocalSettings>();
             var mode = forcedDeliveryMode ?? localSettings?.UnlockNotificationDeliveryMode ?? LocalUnlockNotificationDeliveryMode.Hybrid;
@@ -404,6 +428,16 @@ namespace PlayniteAchievements.Services
             _logger?.Info(
                 $"[LocalOverlay] Dispatching unlock popup provider='{providerKey}', mode='{mode}', style='{style}', " +
                 $"transition='{localSettings?.UnlockOverlayTransitionStyle}', sanElement='{localSettings?.OverlayCustomSanElementPresetId ?? string.Empty}'.");
+            if (localSettings?.EnableOverlayDebugLogging == true)
+            {
+                LogAchievementNotificationDebug(
+                    $"[LocalOverlayDebug] Settings position='{localSettings.UnlockOverlayPosition}', " +
+                    $"followActiveMonitor='{localSettings.ShowOverlayOnActiveGameMonitor}', " +
+                    $"customSize='{localSettings.OverlayCustomWidth:0.###}x{localSettings.OverlayCustomHeight:0.###}', " +
+                    $"customOpacity='{localSettings.OverlayCustomOpacity:0.###}', gameId='{game?.Id}', " +
+                    $"iconPath='{achievementIconPath ?? string.Empty}', iconExists='{(!string.IsNullOrWhiteSpace(achievementIconPath) && File.Exists(achievementIconPath))}', " +
+                    $"descriptionPresent='{!string.IsNullOrWhiteSpace(achievementDescription)}', points='{achievementPoints}', rarity='{achievementRarity}', trophy='{achievementTrophy}'.");
+            }
 
             if (mode == LocalUnlockNotificationDeliveryMode.Overlay || mode == LocalUnlockNotificationDeliveryMode.Hybrid)
             {
@@ -420,7 +454,8 @@ namespace PlayniteAchievements.Services
                     achievementDescription,
                     achievementPoints,
                     achievementRarity,
-                    achievementTrophy);
+                    achievementTrophy,
+                    forcedSanPreviewView);
             }
 
             if (mode == LocalUnlockNotificationDeliveryMode.WindowsToast || mode == LocalUnlockNotificationDeliveryMode.Hybrid)
@@ -451,6 +486,25 @@ namespace PlayniteAchievements.Services
             var safeAchievement = string.IsNullOrWhiteSpace(achievementName) ? "Achievement unlocked" : achievementName.Trim();
             var overlayScale = GetOverlayScale(localSettings, style);
 
+            if (string.Equals(style, NotificationStyleCustom, StringComparison.OrdinalIgnoreCase))
+            {
+                var sanPreview = CreateSanWebViewPreviewContent(
+                    safeGameName,
+                    safeAchievement,
+                    achievementIconPath,
+                    providerKey,
+                    localSettings,
+                    game,
+                    achievementDescription,
+                    achievementPoints,
+                    achievementRarity,
+                    achievementTrophy);
+                if (sanPreview != null)
+                {
+                    return sanPreview;
+                }
+            }
+
             var content = BuildOverlayContent(title, safeGameName, safeAchievement, achievementIconPath, style, providerKey, localSettings, overlayScale, game, achievementDescription, achievementPoints, achievementRarity, achievementTrophy);
             if (!string.Equals(style, NotificationStyleCustom, StringComparison.OrdinalIgnoreCase))
             {
@@ -459,23 +513,253 @@ namespace PlayniteAchievements.Services
 
             var width = Math.Max(280, localSettings?.OverlayCustomWidth ?? 460);
             var height = Math.Max(LocalSettings.MinCustomOverlayHeight, localSettings?.OverlayCustomHeight ?? 128);
+            var borderSpace = localSettings?.OverlayCustomShowBorder != false
+                ? Math.Max(0.5, Math.Min(12, localSettings?.OverlayCustomBorderWidth ?? 1.5)) * overlayScale
+                : 0;
             var frame = new Grid
             {
-                Width = width,
-                MinHeight = height
+                Width = width + (borderSpace * 2),
+                MinHeight = height + (borderSpace * 2)
             };
 
             if (localSettings?.OverlayCustomAutoResizeToContent == true)
             {
-                frame.MaxHeight = Math.Max(height, 520);
+                frame.MaxHeight = Math.Max(height + (borderSpace * 2), 520 + (borderSpace * 2));
             }
             else
             {
-                frame.Height = height;
+                frame.Height = height + (borderSpace * 2);
             }
 
             frame.Children.Add(content);
             return frame;
+        }
+
+        /// <summary>
+        /// Builds the same custom achievement surface used by the live overlay. SAN/WebView2
+        /// selections remain WebView2 here; the media pipeline captures the browser pixels directly
+        /// instead of substituting the WPF compatibility renderer.
+        /// </summary>
+        internal FrameworkElement CreateAchievementCaptureContent(AchievementUnlockedEventArgs args)
+        {
+            if (args == null)
+            {
+                return null;
+            }
+
+            var settings = ProviderRegistry.Settings<LocalSettings>() ?? new LocalSettings();
+            var game = _api?.Database?.Games?.Get(args.PlayniteGameId);
+            var rarity = args.GlobalPercent.HasValue
+                ? AchievementRarityResolver.GetDetailText(
+                    args.GlobalPercent,
+                    RarityTierExtensions.TryParse(args.RarityTier, out var rarityTier)
+                        ? rarityTier
+                        : RarityTier.Common)
+                : args.RarityTier;
+            var sanContent = CreateSanWebViewPreviewContent(
+                args.GameName ?? game?.Name,
+                args.DisplayName ?? args.ApiName,
+                args.IconPath,
+                args.ProviderKey,
+                settings,
+                game,
+                args.Description,
+                args.Points ?? args.ScaledPoints,
+                rarity,
+                args.TrophyType,
+                isInlinePreview: false);
+            if (sanContent != null)
+            {
+                return sanContent;
+            }
+
+            return CreateOverlayPreviewContent(
+                args.GameName ?? game?.Name,
+                args.DisplayName ?? args.ApiName,
+                NotificationStyleCustom,
+                args.ProviderKey,
+                settings,
+                args.IconPath,
+                game,
+                args.Description,
+                args.Points ?? args.ScaledPoints,
+                rarity,
+                args.TrophyType);
+        }
+
+        private FrameworkElement CreateSanWebViewPreviewContent(
+            string gameName,
+            string achievementName,
+            string achievementIconPath,
+            string providerKey,
+            LocalSettings settings,
+            Game game,
+            string achievementDescription,
+            int? achievementPoints,
+            string achievementRarity,
+            string achievementTrophy,
+            bool isInlinePreview = true)
+        {
+            var hasSanSelection = settings != null &&
+                (IsSanTransitionStyle(settings.UnlockOverlayTransitionStyle) ||
+                 !string.IsNullOrWhiteSpace(settings.OverlayCustomSanElementPresetId));
+            if (!hasSanSelection)
+            {
+                return null;
+            }
+
+            var width = Math.Max(280, settings.OverlayCustomWidth);
+            var height = Math.Max(LocalSettings.MinCustomOverlayHeight, settings.OverlayCustomHeight);
+            var borderSpace = settings.OverlayCustomShowBorder
+                ? Math.Max(0.5, Math.Min(12, settings.OverlayCustomBorderWidth)) * Math.Max(0.1, settings.OverlayCustomScale)
+                : 0;
+            var outerWidth = width + (borderSpace * 2);
+            var outerHeight = height + (borderSpace * 2);
+            var durationMs = Math.Max(1200, settings.UnlockOverlayDurationMilliseconds);
+            var autoResizeToContent = settings.OverlayCustomAutoResizeToContent;
+            var host = new Grid
+            {
+                Width = outerWidth,
+                Height = outerHeight,
+                ClipToBounds = true,
+                Background = Brushes.Transparent
+            };
+
+            WebView2 activeWebView = null;
+            string activeHtmlPath = null;
+            var loadGeneration = 0;
+
+            void DisposeActivePreview()
+            {
+                loadGeneration++;
+                if (activeWebView != null)
+                {
+                    try
+                    {
+                        activeWebView.Dispose();
+                    }
+                    catch
+                    {
+                    }
+
+                    activeWebView = null;
+                }
+
+                if (!string.IsNullOrWhiteSpace(activeHtmlPath))
+                {
+                    TryDeleteSanWebViewDocument(activeHtmlPath);
+                    activeHtmlPath = null;
+                }
+
+                host.Children.Clear();
+            }
+
+            host.Loaded += async (_, __) =>
+            {
+                DisposeActivePreview();
+                var generation = loadGeneration;
+                var webView = new WebView2
+                {
+                    Width = outerWidth,
+                    Height = host.Height,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    IsHitTestVisible = false,
+                    Focusable = false,
+                    DefaultBackgroundColor = System.Drawing.Color.Transparent
+                };
+                activeWebView = webView;
+                host.Children.Add(webView);
+
+                try
+                {
+                    var html = BuildSanWebViewDocument(
+                        gameName,
+                        achievementName,
+                        achievementIconPath,
+                        providerKey,
+                        settings,
+                        game,
+                        achievementDescription,
+                        achievementPoints,
+                        achievementRarity,
+                        achievementTrophy,
+                        durationMs,
+                        width,
+                        height,
+                        isInlinePreview: isInlinePreview);
+                    var htmlPath = WriteSanWebViewDocumentToTempFile(html);
+                    if (generation != loadGeneration || !host.IsLoaded)
+                    {
+                        TryDeleteSanWebViewDocument(htmlPath);
+                        return;
+                    }
+
+                    activeHtmlPath = htmlPath;
+                    var environment = await GetSanWebView2EnvironmentAsync();
+                    if (generation != loadGeneration || !host.IsLoaded)
+                    {
+                        return;
+                    }
+
+                    await webView.EnsureCoreWebView2Async(environment);
+                    if (generation != loadGeneration || !host.IsLoaded)
+                    {
+                        return;
+                    }
+
+                    webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+                    webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+                    webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
+                    if (autoResizeToContent)
+                    {
+                        webView.CoreWebView2.WebMessageReceived += (_, messageArgs) =>
+                        {
+                            const string prefix = "san-height:";
+                            var message = messageArgs.TryGetWebMessageAsString();
+                            if (generation != loadGeneration ||
+                                string.IsNullOrWhiteSpace(message) ||
+                                !message.StartsWith(prefix, StringComparison.Ordinal) ||
+                                !double.TryParse(message.Substring(prefix.Length), NumberStyles.Float, CultureInfo.InvariantCulture, out var measuredHeight))
+                            {
+                                return;
+                            }
+
+                            var resizedHeight = Math.Max(outerHeight, Math.Min(2000, Math.Ceiling(measuredHeight)));
+                            host.Height = resizedHeight;
+                            webView.Height = resizedHeight;
+                        };
+                    }
+
+                    webView.CoreWebView2.Navigate(new Uri(htmlPath).AbsoluteUri);
+                }
+                catch (Exception ex)
+                {
+                    if (generation == loadGeneration && host.IsLoaded)
+                    {
+                        _logger?.Warn(ex, "[LocalOverlay] Failed to initialize the inline SAN WebView2 preview; falling back to WPF.");
+                        AchievementNotificationDebugLog.Error(ex, "The inline SAN WebView2 preview failed to initialize; falling back to WPF.");
+                        DisposeActivePreview();
+                        host.Children.Add(BuildOverlayContent(
+                            ResolveOverlayTitle(NotificationStyleCustom),
+                            gameName,
+                            achievementName,
+                            achievementIconPath,
+                            NotificationStyleCustom,
+                            providerKey,
+                            settings,
+                            GetOverlayScale(settings, NotificationStyleCustom),
+                            game,
+                            achievementDescription,
+                            achievementPoints,
+                            achievementRarity,
+                            achievementTrophy));
+                    }
+                }
+            };
+
+            host.Unloaded += (_, __) => DisposeActivePreview();
+            return host;
         }
 
         public static void ClosePersistentSettingsPreview()
@@ -540,6 +824,11 @@ namespace PlayniteAchievements.Services
             }
         }
 
+        /// <summary>
+        /// Clears the auth-failed notification for the given providers. Callers pass the providers
+        /// their refresh actually spoke to, so a refresh cannot clear an unrelated provider's
+        /// warning.
+        /// </summary>
         public void ClearProviderAuthNotifications(IEnumerable<string> providerKeys)
         {
             if (providerKeys == null)
@@ -556,11 +845,6 @@ namespace PlayniteAchievements.Services
                     _logger?.Debug(ex, $"Failed to clear auth notification for {providerKey}.");
                 }
             }
-        }
-
-        public void ClearAllProviderAuthNotifications()
-        {
-            ClearProviderAuthNotifications(AllKnownProviderKeys);
         }
 
         private static string GetLocalizedProviderName(string providerKey)
@@ -621,8 +905,11 @@ namespace PlayniteAchievements.Services
                 if (!File.Exists(soundPath))
                 {
                     _logger?.Warn($"Configured Local unlock sound file was not found: {soundPath}");
+                    AchievementNotificationDebugLog.Warn($"Configured unlock sound was not found: '{soundPath}'.");
                     return;
                 }
+
+                AchievementNotificationDebugLog.Info($"Playing unlock sound from '{soundPath}'.");
 
                 _ = Task.Run(() =>
                 {
@@ -632,16 +919,19 @@ namespace PlayniteAchievements.Services
                         {
                             player.PlaySync();
                         }
+                        AchievementNotificationDebugLog.Info("Unlock sound playback completed.");
                     }
                     catch (Exception ex)
                     {
                         _logger?.Debug(ex, $"Failed to play Local unlock sound: {soundPath}");
+                        AchievementNotificationDebugLog.Error(ex, $"Unlock sound playback failed for '{soundPath}'.");
                     }
                 });
             }
             catch (Exception ex)
             {
                 _logger?.Debug(ex, $"Failed to play Local unlock sound: {soundPath}");
+                AchievementNotificationDebugLog.Error(ex, $"Failed to resolve or start the unlock sound '{soundPath}'.");
             }
         }
 
@@ -659,6 +949,7 @@ namespace PlayniteAchievements.Services
                 if (localSettings?.EnableWindowsToastNotifications != true)
                 {
                     _logger?.Info("[LocalToast] Skipping Windows toast because EnableWindowsToastNotifications is disabled.");
+                    AchievementNotificationDebugLog.Info("Windows toast skipped because EnableWindowsToastNotifications is disabled.");
                     return;
                 }
 
@@ -719,10 +1010,13 @@ try {{
                 };
 
                 _logger?.Info($"[LocalToast] Sending Windows toast for game='{safeGameName}', achievement='{safeAchievementName}', provider='{providerKey}', style='{style}'.");
+                AchievementNotificationDebugLog.Info(
+                    $"Starting Windows toast provider='{providerKey}', style='{style}', imageResolved='{!string.IsNullOrWhiteSpace(toastIconSource)}'.");
                 var process = Process.Start(processStartInfo);
                 if (process == null)
                 {
                     _logger?.Warn("[LocalToast] PowerShell process did not start (Process.Start returned null).");
+                    AchievementNotificationDebugLog.Warn("Windows toast PowerShell process did not start (Process.Start returned null).");
                     return;
                 }
 
@@ -733,6 +1027,7 @@ try {{
                         if (!process.WaitForExit(5000))
                         {
                             _logger?.Warn($"[LocalToast] PowerShell toast process timed out. Pid={process.Id}");
+                            AchievementNotificationDebugLog.Warn($"Windows toast PowerShell process timed out; pid='{process.Id}'.");
                             try
                             {
                                 process.Kill();
@@ -752,15 +1047,20 @@ try {{
                         if (process.ExitCode == 0)
                         {
                             _logger?.Info($"[LocalToast] PowerShell toast command succeeded. ExitCode=0, StdOut={logStdout}, StdErr={logStderr}");
+                            AchievementNotificationDebugLog.Info(
+                                $"Windows toast command completed exitCode='0', stdout='{logStdout}', stderr='{logStderr}'.");
                         }
                         else
                         {
                             _logger?.Warn($"[LocalToast] PowerShell toast command failed. ExitCode={process.ExitCode}, StdOut={logStdout}, StdErr={logStderr}");
+                            AchievementNotificationDebugLog.Warn(
+                                $"Windows toast command failed exitCode='{process.ExitCode}', stdout='{logStdout}', stderr='{logStderr}'.");
                         }
                     }
                     catch (Exception ex)
                     {
                         _logger?.Warn(ex, "[LocalToast] Failed while waiting for PowerShell toast command result.");
+                        AchievementNotificationDebugLog.Error(ex, "Failed while waiting for the Windows toast command result.");
                     }
                     finally
                     {
@@ -774,6 +1074,7 @@ try {{
             catch (Exception ex)
             {
                 _logger?.Warn(ex, "[LocalToast] Failed to send Windows toast notification.");
+                AchievementNotificationDebugLog.Error(ex, "Failed to construct or send the Windows toast notification.");
             }
         }
 
@@ -968,7 +1269,8 @@ steamImage +
             string achievementDescription = null,
             int? achievementPoints = null,
             string achievementRarity = null,
-            string achievementTrophy = null)
+            string achievementTrophy = null,
+            int? forcedSanPreviewView = null)
         {
             try
             {
@@ -979,6 +1281,7 @@ steamImage +
                 var position = localSettings?.UnlockOverlayPosition ?? LocalUnlockOverlayPosition.TopRight;
                 var overlayOpacity = GetOverlayOpacity(localSettings, style);
                 var overlayScale = GetOverlayScale(localSettings, style);
+                var debugLoggingEnabled = localSettings?.EnableOverlayDebugLogging == true;
 
                 RunOnUiThread(() =>
                 {
@@ -998,7 +1301,7 @@ steamImage +
                                 _persistentSettingsPreviewOverlay = null;
                                 existing.Close();
 
-                                if (togglePersistentOverlay && !refreshPersistentOverlay)
+                                if (togglePersistentOverlay && !refreshPersistentOverlay && !forcedSanPreviewView.HasValue)
                                 {
                                     return;
                                 }
@@ -1020,6 +1323,14 @@ steamImage +
                             ? Math.Max(LocalSettings.MinCustomOverlayHeight, localSettings?.OverlayCustomHeight ?? 128)
                             : 110 * overlayScale;
 
+                        if (debugLoggingEnabled)
+                        {
+                            LogAchievementNotificationDebug(
+                                $"Renderer selection style='{style}', custom='{isCustomStyle}', sanSelected='{(localSettings != null && (IsSanTransitionStyle(localSettings.UnlockOverlayTransitionStyle) || !string.IsNullOrWhiteSpace(localSettings.OverlayCustomSanElementPresetId)))}', " +
+                                $"sizeDip='{width:0.###}x{height:0.###}', autoResize='{autoResizeCustom}', opacity='{overlayOpacity:0.###}', " +
+                                $"durationMs='{durationMs}', fadeInMs='{fadeInMs}', fadeOutMs='{fadeOutMs}'.");
+                        }
+
                         if (isCustomStyle &&
                             TryShowSanHtmlOverlayNotification(
                                 safeGameName,
@@ -1036,14 +1347,21 @@ steamImage +
                                 position,
                                 width,
                                 height,
-                                persistentPreviewRequested))
+                                persistentPreviewRequested,
+                                forcedSanPreviewView))
                         {
                             return;
                         }
 
+                        var customBorderSpace = isCustomStyle && localSettings?.OverlayCustomShowBorder != false
+                            ? Math.Max(0.5, Math.Min(12, localSettings?.OverlayCustomBorderWidth ?? 1.5)) * overlayScale
+                            : 0;
+                        var windowWidth = width + (customBorderSpace * 2);
+                        var windowHeight = height + (customBorderSpace * 2);
+
                         var overlayWindow = new Window
                         {
-                            Width = width,
+                            Width = windowWidth,
                             WindowStyle = WindowStyle.None,
                             ResizeMode = ResizeMode.NoResize,
                             AllowsTransparency = true,
@@ -1058,21 +1376,22 @@ steamImage +
 
                         if (autoResizeCustom)
                         {
-                            overlayWindow.MinHeight = height;
-                            overlayWindow.MaxHeight = Math.Max(height, 520);
+                            overlayWindow.MinHeight = windowHeight;
+                            overlayWindow.MaxHeight = Math.Max(windowHeight, 520 + (customBorderSpace * 2));
                             overlayWindow.SizeToContent = SizeToContent.Height;
                         }
                         else
                         {
-                            overlayWindow.Height = height;
+                            overlayWindow.Height = windowHeight;
                         }
 
                         overlayWindow.Content = BuildOverlayContent(title, safeGameName, safeAchievement, achievementIconPath, style, providerKey, localSettings, overlayScale, game, achievementDescription, achievementPoints, achievementRarity, achievementTrophy);
-                        AttachOverlayTopmostGuard(overlayWindow);
+                        AttachOverlayTopmostGuard(overlayWindow, debugLoggingEnabled);
                         var overlayState = persistentPreviewRequested
                             ? null
                             : RegisterOverlayWindow(overlayWindow, position);
-                        PositionOverlayWindow(overlayWindow, position, GetOverlayStackIndex(overlayState), localSettings?.ShowOverlayOnActiveGameMonitor != false);
+                        PositionOverlayWindow(overlayWindow, position, GetOverlayStackIndex(overlayState), localSettings?.ShowOverlayOnActiveGameMonitor == true, debugLoggingEnabled);
+                        LogOverlayWindowLifecycle(overlayWindow, "WPF", "positioned-before-show", overlayOpacity, debugLoggingEnabled);
 
                         overlayWindow.Loaded += (sender, args) =>
                         {
@@ -1080,10 +1399,24 @@ steamImage +
                             {
                                 if (autoResizeCustom)
                                 {
-                                    PositionOverlayWindow(overlayWindow, position, GetOverlayStackIndex(overlayState), localSettings?.ShowOverlayOnActiveGameMonitor != false);
+                                    PositionOverlayWindow(overlayWindow, position, GetOverlayStackIndex(overlayState), localSettings?.ShowOverlayOnActiveGameMonitor == true, debugLoggingEnabled);
                                 }
 
+                                LogOverlayWindowLifecycle(overlayWindow, "WPF", "loaded-before-animation", overlayOpacity, debugLoggingEnabled);
                                 ApplyOverlayEnterAnimation(overlayWindow, overlayOpacity, fadeInMs, transitionStyle, slideDistance);
+                                if (debugLoggingEnabled)
+                                {
+                                    LogAchievementNotificationDebug(
+                                        $"[LocalOverlayDebug] WPF enter animation started targetOpacity='{overlayOpacity:0.###}', " +
+                                        $"fadeInMs='{fadeInMs}', transition='{transitionStyle}', slideDistance='{slideDistance}'.");
+                                    ScheduleOverlayWindowLifecycleSample(
+                                        overlayWindow,
+                                        "WPF",
+                                        "post-enter-animation",
+                                        Math.Max(50, fadeInMs + 100),
+                                        overlayOpacity,
+                                        debugLoggingEnabled);
+                                }
 
                                 if (persistentPreviewRequested)
                                 {
@@ -1111,6 +1444,7 @@ steamImage +
                             catch (Exception animEx)
                             {
                                 _logger?.Warn(animEx, "[LocalOverlay] Failed in loaded animation pipeline.");
+                                AchievementNotificationDebugLog.Error(animEx, "The WPF overlay loaded-animation pipeline failed.");
                                 try
                                 {
                                     overlayWindow.Close();
@@ -1123,6 +1457,7 @@ steamImage +
 
                         overlayWindow.Closed += (_, __) =>
                         {
+                            LogOverlayWindowLifecycle(overlayWindow, "WPF", "closed", overlayOpacity, debugLoggingEnabled);
                             if (ReferenceEquals(_persistentSettingsPreviewOverlay, overlayWindow))
                             {
                                 _persistentSettingsPreviewOverlay = null;
@@ -1140,16 +1475,19 @@ steamImage +
                         }
 
                         overlayWindow.Show();
+                        LogOverlayWindowLifecycle(overlayWindow, "WPF", "show-returned", overlayOpacity, debugLoggingEnabled);
                     }
                     catch (Exception uiEx)
                     {
                         _logger?.Warn(uiEx, "[LocalOverlay] Failed to render overlay on UI thread.");
+                        AchievementNotificationDebugLog.Error(uiEx, "The WPF overlay failed while rendering on the UI thread.");
                     }
                 });
             }
             catch (Exception ex)
             {
                 _logger?.Debug(ex, "[LocalOverlay] Failed to show overlay notification.");
+                AchievementNotificationDebugLog.Error(ex, "The overlay notification failed before or during UI dispatch.");
             }
         }
 
@@ -1168,11 +1506,12 @@ steamImage +
             return "Local Achievement Unlocked";
         }
 
-        private static void PositionOverlayWindow(
+        private void PositionOverlayWindow(
             Window window,
             LocalUnlockOverlayPosition position,
             int stackIndex = 0,
-            bool followActiveGameMonitor = true)
+            bool followActiveGameMonitor = true,
+            bool debugLoggingEnabled = false)
         {
             if (window == null)
             {
@@ -1181,9 +1520,15 @@ steamImage +
 
             const double margin = 16;
             const double spacing = 8;
-            var workArea = followActiveGameMonitor
-                ? GetForegroundMonitorWorkArea()
-                : SystemParameters.WorkArea;
+            var systemWorkArea = SystemParameters.WorkArea;
+            var monitorDiagnostics = new OverlayMonitorDiagnostics();
+            var foregroundWorkArea = systemWorkArea;
+            if (followActiveGameMonitor || debugLoggingEnabled)
+            {
+                foregroundWorkArea = GetForegroundMonitorWorkArea(out monitorDiagnostics);
+            }
+
+            var workArea = followActiveGameMonitor ? foregroundWorkArea : systemWorkArea;
             var stackOffset = Math.Max(0, stackIndex) * (GetOverlayWindowHeight(window) + spacing);
             switch (position)
             {
@@ -1211,6 +1556,19 @@ steamImage +
                     window.Left = workArea.Right - window.Width - margin;
                     window.Top = workArea.Top + margin + stackOffset;
                     break;
+            }
+
+            if (debugLoggingEnabled)
+            {
+                var wpfDpi = VisualTreeHelper.GetDpi(window);
+                LogAchievementNotificationDebug(
+                    $"[LocalOverlayDebug] Positioned renderer='{ResolveOverlayRendererName(window)}', position='{position}', stackIndex='{stackIndex}', " +
+                    $"followActiveMonitor='{followActiveGameMonitor}', foregroundHwnd='{FormatHandle(monitorDiagnostics.ForegroundWindow)}', " +
+                    $"monitorHandle='{FormatHandle(monitorDiagnostics.Monitor)}', monitorInfo='{monitorDiagnostics.HasMonitorInfo}', " +
+                    $"monitorBoundsRaw='{FormatNativeRect(monitorDiagnostics.MonitorBounds)}', monitorWorkRaw='{FormatNativeRect(monitorDiagnostics.WorkArea)}', " +
+                    $"foregroundDpi='{monitorDiagnostics.ForegroundDpi}', wpfScale='{wpfDpi.DpiScaleX:0.###}x{wpfDpi.DpiScaleY:0.###}', " +
+                    $"selectedWorkArea='{FormatRect(workArea)}', systemWorkAreaDip='{FormatRect(systemWorkArea)}', " +
+                    $"windowBoundsDip='{window.Left:0.###},{window.Top:0.###},{window.Width:0.###},{GetOverlayWindowHeight(window):0.###}'.");
             }
         }
 
@@ -1252,7 +1610,7 @@ steamImage +
             return state;
         }
 
-        private static void UnregisterOverlayWindow(OverlayWindowState state)
+        private void UnregisterOverlayWindow(OverlayWindowState state)
         {
             if (state == null)
             {
@@ -1276,7 +1634,7 @@ steamImage +
                 .Count();
         }
 
-        private static void RepositionActiveOverlayWindows(LocalUnlockOverlayPosition position)
+        private void RepositionActiveOverlayWindows(LocalUnlockOverlayPosition position)
         {
             var overlays = ActiveOverlayWindows
                 .Where(item => item != null && item.Position == position && !item.IsClosing && item.Window?.IsVisible == true)
@@ -1289,7 +1647,8 @@ steamImage +
                     overlays[i].Window,
                     position,
                     i,
-                    settings?.ShowOverlayOnActiveGameMonitor != false);
+                    settings?.ShowOverlayOnActiveGameMonitor == true,
+                    settings?.EnableOverlayDebugLogging == true);
             }
         }
 
@@ -1321,7 +1680,8 @@ steamImage +
             LocalUnlockOverlayPosition position,
             double width,
             double height,
-            bool persistentPreviewRequested = false)
+            bool persistentPreviewRequested = false,
+            int? forcedSanPreviewView = null)
         {
             return TryShowSanHtmlOverlayNotification(
                 gameName,
@@ -1338,7 +1698,8 @@ steamImage +
                 position,
                 width,
                 height,
-                persistentPreviewRequested);
+                persistentPreviewRequested,
+                forcedSanPreviewView);
         }
 
         private bool TryShowSanHtmlOverlayNotification(
@@ -1356,7 +1717,8 @@ steamImage +
             LocalUnlockOverlayPosition position,
             double width,
             double height,
-            bool persistentPreviewRequested = false)
+            bool persistentPreviewRequested = false,
+            int? forcedSanPreviewView = null)
         {
             var hasSanSelection = settings != null &&
                 (IsSanTransitionStyle(settings.UnlockOverlayTransitionStyle) ||
@@ -1366,10 +1728,15 @@ steamImage +
                 return false;
             }
 
+            var debugLoggingEnabled = settings.EnableOverlayDebugLogging;
+
             try
             {
-                var canvasWidth = (int)Math.Ceiling(Math.Max(1, width));
-                var canvasHeight = (int)Math.Ceiling(Math.Max(1, height));
+                var borderSpace = settings.OverlayCustomShowBorder
+                    ? Math.Max(0.5, Math.Min(12, settings.OverlayCustomBorderWidth)) * Math.Max(0.1, settings.OverlayCustomScale)
+                    : 0;
+                var canvasWidth = (int)Math.Ceiling(Math.Max(1, width + (borderSpace * 2)));
+                var canvasHeight = (int)Math.Ceiling(Math.Max(1, height + (borderSpace * 2)));
                 var autoResizeToContent = settings.OverlayCustomAutoResizeToContent;
                 var isSanTransition = IsSanTransitionStyle(settings.UnlockOverlayTransitionStyle);
                 var overlayOpacity = Math.Max(0.35, Math.Min(1.0, settings.OverlayCustomOpacity));
@@ -1414,13 +1781,15 @@ steamImage +
                 window.IsHitTestVisible = false;
                 window.Focusable = false;
                 window.Opacity = isSanTransition || persistentPreviewRequested ? 1 : 0;
-                AttachOverlayTopmostGuard(window);
+                AttachOverlayTopmostGuard(window, debugLoggingEnabled);
 
                 var overlayState = persistentPreviewRequested ? null : RegisterOverlayWindow(window, position);
-                PositionOverlayWindow(window, position, GetOverlayStackIndex(overlayState), settings.ShowOverlayOnActiveGameMonitor);
+                PositionOverlayWindow(window, position, GetOverlayStackIndex(overlayState), settings.ShowOverlayOnActiveGameMonitor, debugLoggingEnabled);
+                LogOverlayWindowLifecycle(window, "SAN-WebView2", "positioned-before-show", overlayOpacity, debugLoggingEnabled);
 
                 window.Closed += (_, __) =>
                 {
+                    LogOverlayWindowLifecycle(window, "SAN-WebView2", "closed", overlayOpacity, debugLoggingEnabled);
                     if (ReferenceEquals(_persistentSettingsPreviewOverlay, window))
                     {
                         _persistentSettingsPreviewOverlay = null;
@@ -1446,10 +1815,35 @@ steamImage +
                 {
                     try
                     {
+                        LogOverlayWindowLifecycle(window, "SAN-WebView2", "loaded-before-webview-init", overlayOpacity, debugLoggingEnabled);
                         var environment = await GetSanWebView2EnvironmentAsync();
                         await webView.EnsureCoreWebView2Async(environment);
+                        LogOverlayWindowLifecycle(window, "SAN-WebView2", "webview-controller-ready", overlayOpacity, debugLoggingEnabled);
                         webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
                         webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+                        webView.CoreWebView2.NavigationCompleted += async (_, navigationArgs) =>
+                        {
+                            if (debugLoggingEnabled)
+                            {
+                                LogAchievementNotificationDebug(
+                                    $"[LocalOverlayDebug] SAN navigation completed success='{navigationArgs.IsSuccess}', " +
+                                    $"webErrorStatus='{navigationArgs.WebErrorStatus}', source='{webView.Source}'.");
+                            }
+
+                            LogOverlayWindowLifecycle(window, "SAN-WebView2", "navigation-completed", overlayOpacity, debugLoggingEnabled);
+                            if (navigationArgs.IsSuccess && forcedSanPreviewView.HasValue)
+                            {
+                                try
+                                {
+                                    await webView.CoreWebView2.ExecuteScriptAsync(
+                                        $"window.playniteShowSanView && window.playniteShowSanView({forcedSanPreviewView.Value});");
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger?.Debug(ex, "Could not select the requested SAN settings preview view.");
+                                }
+                            }
+                        };
                         if (autoResizeToContent)
                         {
                             webView.CoreWebView2.WebMessageReceived += (_, messageArgs) =>
@@ -1473,18 +1867,32 @@ steamImage +
                                 }
 
                                 window.Height = resizedHeight;
-                                PositionOverlayWindow(window, position, GetOverlayStackIndex(overlayState), settings.ShowOverlayOnActiveGameMonitor);
+                                PositionOverlayWindow(window, position, GetOverlayStackIndex(overlayState), settings.ShowOverlayOnActiveGameMonitor, debugLoggingEnabled);
+                                LogOverlayWindowLifecycle(window, "SAN-WebView2", "content-height-resized", overlayOpacity, debugLoggingEnabled);
                             };
                         }
                         webView.CoreWebView2.Navigate(new Uri(htmlPath).AbsoluteUri);
+                        if (debugLoggingEnabled)
+                        {
+                            LogAchievementNotificationDebug($"[LocalOverlayDebug] SAN navigation started source='{new Uri(htmlPath).AbsoluteUri}'.");
+                        }
+
                         if (!isSanTransition && !persistentPreviewRequested)
                         {
                             ApplyOverlayEnterAnimation(window, overlayOpacity, fadeInMs, settings.UnlockOverlayTransitionStyle, slideDistance);
+                            ScheduleOverlayWindowLifecycleSample(
+                                window,
+                                "SAN-WebView2",
+                                "post-enter-animation",
+                                Math.Max(50, fadeInMs + 100),
+                                overlayOpacity,
+                                debugLoggingEnabled);
                         }
                     }
                     catch (Exception ex)
                     {
                         _logger?.Warn(ex, "[LocalOverlay] Failed to initialize SAN WebView2 overlay.");
+                        AchievementNotificationDebugLog.Error(ex, "SAN WebView2 initialization failed.");
                         try
                         {
                             window.Close();
@@ -1499,6 +1907,7 @@ steamImage +
                 {
                     _persistentSettingsPreviewOverlay = window;
                     window.Show();
+                    LogOverlayWindowLifecycle(window, "SAN-WebView2", "show-returned-persistent", overlayOpacity, debugLoggingEnabled);
                     return true;
                 }
 
@@ -1541,11 +1950,13 @@ steamImage +
                 };
                 closeTimer.Start();
                 window.Show();
+                LogOverlayWindowLifecycle(window, "SAN-WebView2", "show-returned", overlayOpacity, debugLoggingEnabled);
                 return true;
             }
             catch (Exception ex)
             {
                 _logger?.Warn(ex, "[LocalOverlay] Failed to render SAN WebView2 overlay; falling back to WPF renderer.");
+                AchievementNotificationDebugLog.Error(ex, "SAN WebView2 rendering failed; falling back to the WPF renderer.");
                 return false;
             }
         }
@@ -1593,12 +2004,16 @@ steamImage +
             }
         }
 
-        private static Rect GetForegroundMonitorWorkArea()
+        private static Rect GetForegroundMonitorWorkArea(out OverlayMonitorDiagnostics diagnostics)
         {
+            diagnostics = new OverlayMonitorDiagnostics();
             try
             {
                 var foregroundWindow = GetForegroundWindow();
+                diagnostics.ForegroundWindow = foregroundWindow;
+                diagnostics.ForegroundDpi = TryGetWindowDpi(foregroundWindow);
                 var monitor = MonitorFromWindow(foregroundWindow, MonitorDefaultToPrimary);
+                diagnostics.Monitor = monitor;
                 if (monitor != IntPtr.Zero)
                 {
                     var monitorInfo = new MonitorInfo
@@ -1608,6 +2023,9 @@ steamImage +
 
                     if (GetMonitorInfo(monitor, ref monitorInfo))
                     {
+                        diagnostics.HasMonitorInfo = true;
+                        diagnostics.MonitorBounds = monitorInfo.Monitor;
+                        diagnostics.WorkArea = monitorInfo.Work;
                         return new Rect(
                             monitorInfo.Work.Left,
                             monitorInfo.Work.Top,
@@ -1623,7 +2041,129 @@ steamImage +
             return SystemParameters.WorkArea;
         }
 
+        private void LogOverlayWindowLifecycle(
+            Window window,
+            string renderer,
+            string phase,
+            double targetOpacity,
+            bool debugLoggingEnabled)
+        {
+            if (window == null || !debugLoggingEnabled)
+            {
+                return;
+            }
+
+            try
+            {
+                var handle = new WindowInteropHelper(window).Handle;
+                var nativeBounds = new NativeRect();
+                var hasNativeBounds = handle != IntPtr.Zero && GetWindowRect(handle, out nativeBounds);
+                var dpi = VisualTreeHelper.GetDpi(window);
+                var source = PresentationSource.FromVisual(window);
+                var transform = source?.CompositionTarget?.TransformToDevice ?? Matrix.Identity;
+
+                LogAchievementNotificationDebug(
+                    $"[LocalOverlayDebug] Window lifecycle renderer='{renderer}', phase='{phase}', hwnd='{FormatHandle(handle)}', " +
+                    $"hasPresentationSource='{source != null}', isLoaded='{window.IsLoaded}', isVisible='{window.IsVisible}', " +
+                    $"windowState='{window.WindowState}', topmost='{window.Topmost}', allowsTransparency='{window.AllowsTransparency}', " +
+                    $"opacity='{window.Opacity:0.###}', targetOpacity='{targetOpacity:0.###}', " +
+                    $"boundsDip='{window.Left:0.###},{window.Top:0.###},{window.Width:0.###},{GetOverlayWindowHeight(window):0.###}', " +
+                    $"actualSizeDip='{window.ActualWidth:0.###}x{window.ActualHeight:0.###}', " +
+                    $"wpfScale='{dpi.DpiScaleX:0.###}x{dpi.DpiScaleY:0.###}', " +
+                    $"sourceTransform='{transform.M11:0.###}x{transform.M22:0.###}', " +
+                    $"nativeDpi='{TryGetWindowDpi(handle)}', nativeBoundsPx='{(hasNativeBounds ? FormatNativeRect(nativeBounds) : "unavailable")}'.");
+            }
+            catch (Exception ex)
+            {
+                _logger?.Debug(ex, $"[LocalOverlay] Failed to collect window diagnostics for renderer='{renderer}', phase='{phase}'.");
+            }
+        }
+
+        private void ScheduleOverlayWindowLifecycleSample(
+            Window window,
+            string renderer,
+            string phase,
+            int delayMilliseconds,
+            double targetOpacity,
+            bool debugLoggingEnabled)
+        {
+            if (window == null || !debugLoggingEnabled)
+            {
+                return;
+            }
+
+            var timer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(Math.Max(1, delayMilliseconds))
+            };
+            timer.Tick += (_, __) =>
+            {
+                timer.Stop();
+                LogOverlayWindowLifecycle(window, renderer, phase, targetOpacity, debugLoggingEnabled);
+            };
+            timer.Start();
+        }
+
+        private static string ResolveOverlayRendererName(Window window)
+        {
+            return window?.Content is WebView2 ? "SAN-WebView2" : "WPF";
+        }
+
+        private static string FormatHandle(IntPtr handle)
+        {
+            return $"0x{handle.ToInt64():X}";
+        }
+
+        private static string FormatRect(Rect rect)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0:0.###},{1:0.###},{2:0.###},{3:0.###}",
+                rect.Left,
+                rect.Top,
+                rect.Width,
+                rect.Height);
+        }
+
+        private static string FormatNativeRect(NativeRect rect)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0},{1},{2},{3}",
+                rect.Left,
+                rect.Top,
+                rect.Right,
+                rect.Bottom);
+        }
+
+        private static uint TryGetWindowDpi(IntPtr window)
+        {
+            if (window == IntPtr.Zero)
+            {
+                return 0;
+            }
+
+            try
+            {
+                return GetDpiForWindow(window);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
         private const uint MonitorDefaultToPrimary = 1;
+
+        private sealed class OverlayMonitorDiagnostics
+        {
+            public IntPtr ForegroundWindow { get; set; }
+            public IntPtr Monitor { get; set; }
+            public bool HasMonitorInfo { get; set; }
+            public NativeRect MonitorBounds { get; set; }
+            public NativeRect WorkArea { get; set; }
+            public uint ForegroundDpi { get; set; }
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct NativeRect
@@ -1653,7 +2193,14 @@ steamImage +
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo monitorInfo);
 
-        private static void AttachOverlayTopmostGuard(Window window)
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(IntPtr window);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
+
+        private void AttachOverlayTopmostGuard(Window window, bool debugLoggingEnabled)
         {
             if (window == null)
             {
@@ -1661,6 +2208,8 @@ steamImage +
             }
 
             DispatcherTimer topmostTimer = null;
+            var loggedSuccess = false;
+            var loggedFailure = false;
             Action enforceTopmost = () =>
             {
                 try
@@ -1668,7 +2217,7 @@ steamImage +
                     var handle = new WindowInteropHelper(window).Handle;
                     if (handle != IntPtr.Zero)
                     {
-                        SetWindowPos(
+                        var succeeded = SetWindowPos(
                             handle,
                             HwndTopmost,
                             0,
@@ -1679,10 +2228,30 @@ steamImage +
                             SetWindowPosNoSize |
                             SetWindowPosNoActivate |
                             SetWindowPosShowWindow);
+
+                        if (succeeded && !loggedSuccess && debugLoggingEnabled)
+                        {
+                            loggedSuccess = true;
+                            LogAchievementNotificationDebug(
+                                $"[LocalOverlayDebug] Topmost guard succeeded renderer='{ResolveOverlayRendererName(window)}', " +
+                                $"hwnd='{FormatHandle(handle)}'.");
+                        }
+                        else if (!succeeded && !loggedFailure)
+                        {
+                            loggedFailure = true;
+                            _logger?.Warn(
+                                $"[LocalOverlay] Topmost guard failed renderer='{ResolveOverlayRendererName(window)}', " +
+                                $"hwnd='{FormatHandle(handle)}', win32Error='{Marshal.GetLastWin32Error()}'.");
+                        }
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    if (!loggedFailure)
+                    {
+                        loggedFailure = true;
+                        _logger?.Warn(ex, "[LocalOverlay] Topmost guard threw an exception.");
+                    }
                 }
             };
 
@@ -1821,6 +2390,10 @@ steamImage +
                         webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
                         webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
                         webView.NavigateToString("<!doctype html><html><head><meta charset=\"utf-8\"></head><body></body></html>");
+                        // Keep the initialized controller alive without leaving a visible WPF window in
+                        // Application.Current.Windows. Fullscreen themes can treat any visible secondary
+                        // window as an active overlay and stop updating their focus/navigation state.
+                        window.Hide();
                         _logger?.Debug("[LocalOverlay] SAN WebView2 controller warm-up completed.");
                     }
                     catch (Exception ex)
@@ -1911,6 +2484,21 @@ steamImage +
                 : Path.GetDirectoryName(assemblyLocation) ?? AppDomain.CurrentDomain.BaseDirectory;
         }
 
+        private static void AppendSanFontFace(StringBuilder builder, LocalSettings settings, string family, string fileName)
+        {
+            var uri = ResolveSanAssetUri(settings, "fonts", fileName);
+            if (builder == null || string.IsNullOrWhiteSpace(uri))
+            {
+                return;
+            }
+
+            builder.Append("@font-face { font-family: '")
+                .Append(family)
+                .Append("'; src: url('")
+                .Append(CssUrl(uri))
+                .AppendLine("'); }");
+        }
+
         private string BuildSanWebViewDocument(
             string gameName,
             string achievementName,
@@ -1924,7 +2512,8 @@ steamImage +
             string achievementTrophy,
             int durationMs,
             double width,
-            double height)
+            double height,
+            bool isInlinePreview = false)
         {
             var assetRoot = settings.OverlayCustomSanAssetRootPath;
             if (string.IsNullOrWhiteSpace(assetRoot))
@@ -2067,12 +2656,44 @@ steamImage +
                 : string.Empty;
             var sanElems = ResolveSanTextElements(settings, line1, line2, line3, out var unlockMessage, out var title, out var desc);
             var sanLineDefinitionsJson = BuildSanLineDefinitionsJson(settings, line1, line2, line3, line4, line5, line6);
+            var sanElementAnchorsJson = "{}";
+            if (!string.IsNullOrWhiteSpace(settings?.OverlayCustomElementAnchorsJson))
+            {
+                try
+                {
+                    sanElementAnchorsJson = JObject.Parse(settings.OverlayCustomElementAnchorsJson).ToString(Newtonsoft.Json.Formatting.None);
+                }
+                catch (Newtonsoft.Json.JsonException)
+                {
+                    sanElementAnchorsJson = "{}";
+                }
+            }
 
-            var displaySeconds = Math.Max(1, Math.Max(1, durationMs) / 1000.0);
             var view1Seconds = Math.Max(0.5, (settings?.OverlayCustomSanView1DurationMilliseconds > 0 ? settings.OverlayCustomSanView1DurationMilliseconds : 5000) / 1000.0);
             var view2Seconds = Math.Max(0.5, (settings?.OverlayCustomSanView2DurationMilliseconds > 0 ? settings.OverlayCustomSanView2DurationMilliseconds : 5000) / 1000.0);
+            var displaySeconds = usesSanTimeline
+                ? view1Seconds + view2Seconds
+                : Math.Max(1, Math.Max(1, durationMs) / 1000.0);
             var timelineScale = Math.Max(0.1, displaySeconds / 10.0);
             var transitionSeconds = Math.Max(0.05, ((settings.UnlockOverlayFadeInMilliseconds > 0 ? settings.UnlockOverlayFadeInMilliseconds : 180) / 1000.0) * timelineScale);
+            if (usesSanTimeline)
+            {
+                // SAN's original styles assume two equal halves and use --displaytime / 2 as
+                // the phase boundary. Respect the independently configured view durations.
+                presetCss = presetCss?.Replace("var(--displaytime) / 2", "var(--san-view1-displaytime)");
+                elementCss = elementCss?.Replace("var(--displaytime) / 2", "var(--san-view1-displaytime)");
+
+                // xQjan uses as many as fourteen transition units for both its entrance and
+                // exit sequences. With asymmetric or short view durations, scaling only from
+                // the combined duration can consume the complete phase. Keep at least half of
+                // the shorter view available for its settled content.
+                if (string.Equals(animationPreset, "xqjan", StringComparison.OrdinalIgnoreCase))
+                {
+                    transitionSeconds = Math.Min(
+                        transitionSeconds,
+                        Math.Max(0.01, Math.Min(view1Seconds, view2Seconds) / 28.0));
+                }
+            }
             var bodyAttrs = BuildSanBodyAttributes(settings, customisation, sanElems.Length >= 3, animationPreset, elementPreset);
             var themeScale = Math.Max(0.1, (customisation?.Value<double?>("scale") ?? 100) / 100.0);
             var sanScale = Math.Max(0.1, settings.OverlayCustomScale * themeScale);
@@ -2106,6 +2727,19 @@ steamImage +
                 : "none";
 
             var variables = new StringBuilder();
+            AppendSanFontFace(variables, settings, "Titillium Web", "TitilliumWeb-SemiBold.ttf");
+            AppendSanFontFace(variables, settings, "Titillium Web Regular", "TitilliumWeb-Regular.ttf");
+            AppendSanFontFace(variables, settings, "Roboto", "Roboto-Medium.ttf");
+            AppendSanFontFace(variables, settings, "Source Sans Pro Light", "SourceSansPro-Light.ttf");
+            AppendSanFontFace(variables, settings, "Source Sans Pro ExtraLight", "SourceSansPro-ExtraLight.ttf");
+            AppendSanFontFace(variables, settings, "Noto Sans", "NotoSans-Medium.ttf");
+            AppendSanFontFace(variables, settings, "Noto Sans Medium", "NotoSans-Medium.ttf");
+            AppendSanFontFace(variables, settings, "Noto Sans Light", "NotoSans-Light.ttf");
+            AppendSanFontFace(variables, settings, "Noto Sans ExtraLight", "NotoSans-ExtraLight.ttf");
+            AppendSanFontFace(variables, settings, "Open Sans", "OpenSans-Medium.ttf");
+            AppendSanFontFace(variables, settings, "Mandali", "Mandali-Regular.ttf");
+            AppendSanFontFace(variables, settings, "VT323", "VT323-Regular.ttf");
+            AppendSanFontFace(variables, settings, "JetBrains Mono", "JetBrainsMono-Light.ttf");
             variables.AppendLine(":root {");
             variables.AppendLine($"  --notifywidth: {Math.Max(1, width).ToString("0.###", CultureInfo.InvariantCulture)}px;");
             variables.AppendLine($"  --notifyheight: {Math.Max(1, height).ToString("0.###", CultureInfo.InvariantCulture)}px;");
@@ -2113,6 +2747,9 @@ steamImage +
             variables.AppendLine($"  --san-secondary-icon-size: {Math.Max(1, settings?.OverlayCustomSecondaryIconSize ?? settings?.OverlayCustomIconSize ?? 58).ToString("0.###", CultureInfo.InvariantCulture)}px;");
             variables.AppendLine($"  --san-icon-corner-radius: {Math.Max(0, settings?.OverlayCustomIconCornerRadius ?? 10).ToString("0.###", CultureInfo.InvariantCulture)}px;");
             variables.AppendLine($"  --san-secondary-icon-corner-radius: {Math.Max(0, settings?.OverlayCustomSecondaryIconCornerRadius ?? 10).ToString("0.###", CultureInfo.InvariantCulture)}px;");
+            variables.AppendLine($"  --san-icon-background: {(settings?.OverlayCustomShowIconBackground != false ? CssBrushColor(settings?.OverlayCustomIconBackgroundColor, "#24ffffff") : "transparent")};");
+            variables.AppendLine($"  --san-secondary-icon-background: {(settings?.OverlayCustomShowSecondaryIconBackground != false ? CssBrushColor(settings?.OverlayCustomSecondaryIconBackgroundColor, "#18ffffff") : "transparent")};");
+            variables.AppendLine($"  --san-cover-background: {(settings?.OverlayCustomShowCoverBackground != false ? CssBrushColor(settings?.OverlayCustomCoverBackgroundColor, "#1cffffff") : "transparent")};");
             variables.AppendLine($"  --iconsize: var(--san-icon-size);");
             variables.AppendLine($"  --icon-size: var(--san-icon-size);");
             variables.AppendLine($"  --achicon-size: var(--san-icon-size);");
@@ -2164,8 +2801,9 @@ steamImage +
             variables.AppendLine($"  --blur: {(((customisation?.Value<double?>("blur") ?? 0) * sanScale) / 50.0).ToString("0.###", CultureInfo.InvariantCulture)}px;");
             variables.AppendLine($"  --mask: {ResolveSanMask(settings, customisation)};");
             variables.AppendLine($"  --outline: {(settings?.OverlayCustomShowBorder != false ? (customisation?.Value<string>("outline") ?? "solid") : "none")};");
-            variables.AppendLine($"  --outlinewidth: {(((customisation?.Value<double?>("outlinewidth") ?? 25) / 25.0) * Math.Max(0.1, settings?.OverlayCustomScale ?? 1.0)).ToString("0.###", CultureInfo.InvariantCulture)}px;");
+            variables.AppendLine($"  --outlinewidth: {(Math.Max(0.5, Math.Min(12, settings?.OverlayCustomBorderWidth ?? 1.5)) * Math.Max(0.1, settings?.OverlayCustomScale ?? 1.0)).ToString("0.###", CultureInfo.InvariantCulture)}px;");
             variables.AppendLine($"  --outlinecolor: {CssColor(settings?.OverlayCustomBorderColor, CssColor(customisation?.Value<string>("outlinecolor"), "transparent"))};");
+            variables.AppendLine($"  --san-border-space: {(settings?.OverlayCustomShowBorder != false ? Math.Max(0.5, Math.Min(12, settings?.OverlayCustomBorderWidth ?? 1.5)) * Math.Max(0.1, settings?.OverlayCustomScale ?? 1.0) : 0).ToString("0.###", CultureInfo.InvariantCulture)}px;");
             variables.AppendLine($"  --iconborder: {ResolveSanIconBorder(settings, customisation, achievementRarity)};");
             variables.AppendLine($"  --iconborderpos: {(string.Equals(customisation?.Value<string>("iconborderpos"), "back", StringComparison.OrdinalIgnoreCase) ? "-1" : "99")};");
             variables.AppendLine($"  --iconborderscale: {((customisation?.Value<double?>("iconborderscale") ?? 100) / 100.0).ToString("0.###", CultureInfo.InvariantCulture)};");
@@ -2191,16 +2829,33 @@ steamImage +
             variables.AppendLine($"  --percentdisplaytype: {(customisation?.Value<bool?>("usepercent") == true ? "block" : "none")};");
             variables.AppendLine("}");
             variables.AppendLine("html, body { overflow: hidden; background: transparent !important; }");
-            variables.AppendLine("body { opacity: 1 !important; }");
+            variables.AppendLine("body { box-sizing: border-box !important; padding: var(--san-border-space) !important; opacity: 1 !important; }");
+            var cssTextRendering = ResolveCssTextRendering(settings?.OverlayCustomTextFormattingMode ?? LocalOverlayTextFormattingMode.Auto);
+            if (!string.IsNullOrWhiteSpace(cssTextRendering))
+            {
+                variables.AppendLine($"html, body, body * {{ text-rendering: {cssTextRendering} !important; }}");
+            }
+            if (isInlinePreview)
+            {
+                // SAN hides the cursor when its display timeline finishes. A live notification
+                // closes at that point, but the embedded settings preview remains present.
+                variables.AppendLine("html, body, body * { cursor: default !important; pointer-events: none !important; }");
+            }
             variables.AppendLine(".san-inline-token-icon { display: inline-block; width: 1.2em; height: 1.2em; margin: 0 0.12em -0.18em; background: center / contain no-repeat; }");
             variables.AppendLine(".wrapper#achcontent > #unlockmsg, .wrapper#achcontent > #title, .wrapper#achcontent > #desc { display: none !important; }");
             variables.AppendLine(".wrapper#achcontent > .san-line-stack { grid-column: 1 / -1; grid-row: 1 / -1; }");
             variables.AppendLine(".san-line-stack { display: flex !important; flex-direction: column !important; align-items: flex-start !important; justify-content: center !important; gap: 0 !important; width: 100% !important; min-width: 0 !important; height: 100% !important; overflow: hidden !important; }");
             variables.AppendLine(".san-line-stack .san-generated-line { position: static !important; inset: auto !important; transform: none !important; translate: 0 0 !important; display: block !important; opacity: 1 !important; scale: 1 !important; animation: none !important; transition: none !important; width: 100% !important; min-width: 0 !important; white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }");
+            if (settings?.OverlayCustomWrapAllText == true)
+            {
+                variables.AppendLine(".san-line-stack .san-generated-line { overflow-wrap: anywhere !important; word-break: break-word !important; }");
+            }
             variables.AppendLine(".wrapper#achcontent:has(.san-line-stack), .san-line-stack, .san-line-stack * { opacity: 1 !important; }");
             variables.AppendLine(".san-line-inner { display: inline-block; line-height: 1.15; vertical-align: middle; max-width: 100%; }");
             variables.AppendLine(".san-line-inner, .san-line-inner * { font-weight: inherit !important; font-style: inherit !important; text-decoration: inherit !important; }");
             variables.AppendLine(".wrapper#achiconwrapper { width: var(--san-icon-size) !important; height: var(--san-icon-size) !important; min-width: var(--san-icon-size) !important; min-height: var(--san-icon-size) !important; max-width: var(--san-icon-size) !important; max-height: var(--san-icon-size) !important; }");
+            variables.AppendLine("#iconbg { background-color: var(--san-icon-background) !important; }");
+            variables.AppendLine(".wrapper#logo { background-color: var(--san-secondary-icon-background) !important; border-radius: var(--san-secondary-icon-corner-radius) !important; }");
             variables.AppendLine(".wrapper#logo { width: var(--san-secondary-icon-size) !important; height: var(--san-secondary-icon-size) !important; min-width: var(--san-secondary-icon-size) !important; min-height: var(--san-secondary-icon-size) !important; max-width: var(--san-secondary-icon-size) !important; max-height: var(--san-secondary-icon-size) !important; }");
             variables.AppendLine(".wrapper#achiconwrapper, .wrapper#achiconinnerwrapper, #achicon, #iconbg { border-radius: var(--san-icon-corner-radius) !important; }");
             variables.AppendLine(".wrapper#achiconinnerwrapper, #achicon, #iconbg { overflow: hidden !important; }");
@@ -2218,7 +2873,7 @@ steamImage +
             }
             variables.AppendLine("#xpwrapper { display: none !important; }");
             variables.AppendLine(".wrapper#achcont, .wrapper#bg { border-radius: var(--roundness) !important; overflow: hidden; }");
-            variables.AppendLine(".wrapper#achcont { position: relative !important; border: var(--outlinewidth) var(--outline) var(--outlinecolor) !important; }");
+            variables.AppendLine(".wrapper#achcont { position: relative !important; border: 0 !important; outline: var(--outlinewidth) var(--outline) var(--outlinecolor) !important; outline-offset: 0; }");
             variables.AppendLine("body.san-webview-fast-start .wrapper#achcontent { opacity: 1 !important; animation: none !important; animation-delay: 0ms !important; transition: none !important; }");
             variables.AppendLine("body.san-webview-fast-start .wrapper#achcontent > span { opacity: 1 !important; animation: none !important; animation-delay: 0ms !important; transition: none !important; }");
             variables.AppendLine("body.san-webview-hide-icon-border #iconborder { display: none !important; }");
@@ -2226,7 +2881,8 @@ steamImage +
             variables.AppendLine("body.san-webview-force-visible #achicon { opacity: 1 !important; scale: 1 !important; animation: none !important; display: grid !important; }");
             variables.AppendLine("body.san-webview-force-visible .wrapper#achiconwrapper { opacity: 1 !important; scale: 1 !important; animation: none !important; }");
             variables.AppendLine("body.san-webview-no-secondary-icon .wrapper#logo, body.san-webview-no-secondary-icon #logo { display: none !important; opacity: 0 !important; animation: none !important; }");
-            variables.AppendLine(".san-game-cover { position: absolute; top: 0; bottom: 0; width: var(--san-cover-width); background: center / cover no-repeat var(--san-cover-image); opacity: 1; pointer-events: none; z-index: 2; }");
+            variables.AppendLine(".san-game-cover { position: absolute; top: 0; bottom: 0; width: var(--san-cover-width); background-color: var(--san-cover-background); background-image: var(--san-cover-image); background-position: center; background-size: contain; background-repeat: no-repeat; opacity: 1; pointer-events: none; z-index: 2; }");
+            variables.AppendLine(".san-game-cover.empty::after { content: 'COVER'; position: absolute; inset: 0; display: grid; place-items: center; color: #aeb8c4; font-family: 'Segoe UI', sans-serif; font-size: 12px; font-weight: 700; }");
             variables.AppendLine(".san-game-cover.left { left: 0; }");
             variables.AppendLine(".san-game-cover.right { right: 0; }");
             variables.AppendLine("body.san-webview-has-cover .wrapper#achcont { overflow: hidden; }");
@@ -2317,7 +2973,9 @@ const sanStrings = {{
   desc: {JsString(desc)}
 }};
 const sanLineDefinitions = {sanLineDefinitionsJson};
+const sanElementAnchors = {sanElementAnchorsJson};
 const sanElems = {JsStringArray(sanElems)};
+const sanTimelineStartedAt = performance.now();
 const sanEscape = value => String(value || '').replace(/[&<>'""]/g, ch => {{
   switch (ch) {{
     case '&': return '&amp;';
@@ -2390,6 +3048,7 @@ const sanApplyElems = () => {{
         el.innerHTML = sanAddElem('decoration', pos) + sanAddElem('hiddenicon', pos) + '<span class=""san-line-inner"">' + line.html + '</span>' + sanAddElem('percent', pos);
         el.style.color = line.color || '';
         el.style.fontSize = line.size ? line.size + 'px' : '';
+        el.style.setProperty('font-family', line.fontFamily || '', line.fontFamily ? 'important' : '');
         el.style.marginBottom = line.spacing ? line.spacing + 'px' : '0';
         el.style.paddingBottom = line.spacing ? line.spacing + 'px' : '0';
         el.style.lineHeight = '1.15';
@@ -2401,6 +3060,7 @@ const sanApplyElems = () => {{
         el.style.setProperty('text-decoration', textDecoration.join(' ') || 'none', 'important');
         const inner = el.querySelector('.san-line-inner');
         if (inner) {{
+          inner.style.setProperty('font-family', line.fontFamily || '', line.fontFamily ? 'important' : '');
           inner.style.setProperty('font-weight', line.bold ? '700' : '400', 'important');
           inner.style.setProperty('font-style', line.italic ? 'italic' : 'normal', 'important');
           inner.style.setProperty('text-decoration', textDecoration.join(' ') || 'none', 'important');
@@ -2411,8 +3071,9 @@ const sanApplyElems = () => {{
     }});
   }};
   views.forEach((root, index) => fillView(root, index));
+  let sanViewSwitchTimer = null;
   if (views.length === 1 && sanLineDefinitions.some(line => line.view === 1)) {{
-    window.setTimeout(() => {{
+    sanViewSwitchTimer = window.setTimeout(() => {{
       const root = views[0];
       if (root && root.dataset) {{
         root.dataset.sanViewIndex = '2';
@@ -2420,21 +3081,178 @@ const sanApplyElems = () => {{
       fillView(root, 1);
     }}, {Math.Max(500, (int)Math.Round(view1Seconds * 1000)).ToString(CultureInfo.InvariantCulture)});
   }}
+  window.playniteShowSanView = requestedView => {{
+    const view = requestedView === 2 ? 2 : 1;
+    if (sanViewSwitchTimer !== null) window.clearTimeout(sanViewSwitchTimer);
+    const entryDelay = root => {{
+      if (!root || !root.getAnimations) return Number.POSITIVE_INFINITY;
+      const delays = root.getAnimations({{ subtree: false }})
+        .map(animation => Number(animation.effect && animation.effect.getTiming
+          ? animation.effect.getTiming().delay
+          : 0) || 0);
+      return delays.length ? Math.min(...delays) : Number.POSITIVE_INFINITY;
+    }};
+    const firstView = views.length > 1 && entryDelay(views[1]) < entryDelay(views[0]) ? 2 : 1;
+    views.forEach((root, index) => {{
+      if (root === document) return;
+      root.style.setProperty('display', index === view - 1 || views.length === 1 ? 'grid' : 'none', 'important');
+    }});
+    const root = views.length === 1 ? views[0] : views[view - 1];
+    if (root) {{
+      if (root.dataset) root.dataset.sanViewIndex = String(view);
+      fillView(root, view - 1);
+    }}
+    void document.body.offsetWidth;
+    const viewStart = view === firstView
+      ? 0
+      : firstView === 1
+        ? {(view1Seconds * 1000).ToString("0", CultureInfo.InvariantCulture)}
+        : {(view2Seconds * 1000).ToString("0", CultureInfo.InvariantCulture)};
+    document.getAnimations().forEach(animation => {{
+      try {{
+        animation.pause();
+        const target = animation.effect && animation.effect.target;
+        const belongsToSelectedView = root === document || !target || root.contains(target) || target === root;
+        if (!belongsToSelectedView) {{
+          animation.cancel();
+          return;
+        }}
+        animation.currentTime = viewStart;
+        const computedTiming = animation.effect && animation.effect.getComputedTiming
+          ? animation.effect.getComputedTiming()
+          : null;
+        const animationEnd = computedTiming && Number.isFinite(computedTiming.endTime)
+          ? computedTiming.endTime
+          : Number.POSITIVE_INFINITY;
+        if (viewStart > 0 && animationEnd <= viewStart) {{
+          // Calling play() on an animation already finished at the requested phase rewinds it.
+          // Keep entrance animations pinned to their filled end state for the exiting view.
+          animation.pause();
+        }} else {{
+          animation.play();
+        }}
+      }} catch (_) {{ }}
+    }});
+    return true;
+  }};
   document.body.toggleAttribute('alldetails', sanLineDefinitions.filter(line => line.html).length >= 3);
+}};
+window.playniteSanScreenshotDelay = (requestedView, millisecondsBeforeEnd) => {{
+  const view = requestedView === 2 ? 2 : 1;
+  const viewDuration = view === 1
+    ? {(view1Seconds * 1000).ToString("0", CultureInfo.InvariantCulture)}
+    : {(view2Seconds * 1000).ToString("0", CultureInfo.InvariantCulture)};
+  const viewEnd = view === 1
+    ? {(view1Seconds * 1000).ToString("0", CultureInfo.InvariantCulture)}
+    : {((view1Seconds + view2Seconds) * 1000).ToString("0", CultureInfo.InvariantCulture)};
+  const beforeEnd = Math.max(0, Math.min(Number(millisecondsBeforeEnd) || 0, Math.max(0, viewDuration - 100)));
+  const readyAt = Math.max(100, viewEnd - beforeEnd);
+  return Math.max(0, readyAt - (performance.now() - sanTimelineStartedAt));
+}};
+window.playnitePauseSanScreenshot = () => {{
+  window.__playnitePausedSanAnimations = document.getAnimations().filter(animation => animation.playState === 'running');
+  window.__playnitePausedSanAnimations.forEach(animation => animation.pause());
+  return true;
+}};
+window.playniteResumeSanScreenshot = () => {{
+  (window.__playnitePausedSanAnimations || []).forEach(animation => {{
+    try {{ animation.play(); }} catch (_) {{ }}
+  }});
+  window.__playnitePausedSanAnimations = [];
 }};
 document.body.dataset.sanAnimationPreset = {JsString(animationPreset)};
 document.body.dataset.sanElements = {JsString(elementPreset)};
 sanApplyElems();
+const sanReflowWrappedManualLines = () => {{
+  if (!{JsBool(settings?.OverlayCustomWrapAllText == true)}) return;
+  document.querySelectorAll('#achcont').forEach(root => {{
+    const lines = [...root.querySelectorAll('.san-generated-line[data-san-line-id]')]
+      .filter(line => getComputedStyle(line).position === 'absolute' && getComputedStyle(line).display !== 'none');
+    lines.forEach(line => {{
+      const style = getComputedStyle(line);
+      if (!line.dataset.sanManualBaseLeft) line.dataset.sanManualBaseLeft = String(parseFloat(style.left) || 0);
+      if (!line.dataset.sanManualBaseWidth) line.dataset.sanManualBaseWidth = String(Math.max(1, parseFloat(style.width) || line.getBoundingClientRect().width || 1));
+      if (!line.dataset.sanManualBaseTop) line.dataset.sanManualBaseTop = String(parseFloat(style.top) || 0);
+      if (!line.dataset.sanManualBaseHeight) line.dataset.sanManualBaseHeight = String(Math.max(1, parseFloat(style.height) || line.getBoundingClientRect().height || 1));
+      let left = Number(line.dataset.sanManualBaseLeft) || 0;
+      let width = Number(line.dataset.sanManualBaseWidth) || 1;
+      const top = Number(line.dataset.sanManualBaseTop) || 0;
+      const height = Number(line.dataset.sanManualBaseHeight) || 1;
+      [...root.querySelectorAll('#achiconwrapper,#logo,.san-secondary-icon,.san-game-cover')].forEach(obstacle => {{
+        const obstacleStyle = getComputedStyle(obstacle);
+        if (obstacleStyle.display === 'none' || obstacleStyle.visibility === 'hidden' || obstacle === line) return;
+        const rootRect = root.getBoundingClientRect();
+        const rect = obstacle.getBoundingClientRect();
+        const obstacleLeft = rect.left - rootRect.left;
+        const obstacleTop = rect.top - rootRect.top;
+        if (top >= obstacleTop + rect.height || top + height <= obstacleTop || left >= obstacleLeft + rect.width || left + width <= obstacleLeft) return;
+        if (obstacleLeft > left) width = Math.max(1, obstacleLeft - 6 - left);
+        else {{ const right = left + width; left = obstacleLeft + rect.width + 6; width = Math.max(1, right - left); }}
+      }});
+      line.style.setProperty('left', Math.round(left) + 'px', 'important');
+      line.style.setProperty('width', Math.round(width) + 'px', 'important');
+      line.style.setProperty('min-width', Math.round(width) + 'px', 'important');
+      line.style.setProperty('max-width', Math.round(width) + 'px', 'important');
+      const baseHeight = Number(line.dataset.sanManualBaseHeight) || 1;
+      line.style.setProperty('height', 'auto', 'important');
+      line.style.setProperty('min-height', baseHeight + 'px', 'important');
+      line.style.setProperty('overflow-wrap', 'anywhere', 'important');
+      line.style.setProperty('word-break', 'break-word', 'important');
+    }});
+    lines.sort((a, b) => (Number(a.dataset.sanManualBaseTop) || 0) - (Number(b.dataset.sanManualBaseTop) || 0));
+    let addedHeight = 0;
+    lines.forEach(line => {{
+      const baseTop = Number(line.dataset.sanManualBaseTop) || 0;
+      const baseHeight = Number(line.dataset.sanManualBaseHeight) || 1;
+      line.style.setProperty('top', Math.round(baseTop + addedHeight) + 'px', 'important');
+      const actualHeight = Math.max(baseHeight, line.scrollHeight, line.getBoundingClientRect().height);
+      addedHeight += Math.max(0, actualHeight - baseHeight);
+    }});
+  }});
+}};
+const sanApplyElementAnchors = () => {{
+  sanReflowWrappedManualLines();
+  Object.entries(sanElementAnchors || {{}}).forEach(([id, anchor]) => {{
+    const elementSelector = id === 'primaryIcon'
+      ? '#achiconwrapper,#iconbg'
+      : id === 'secondaryIcon'
+        ? '#logo,.san-secondary-icon'
+        : '';
+    if (!elementSelector || !anchor || !/^line[1-6]$/.test(anchor.target || '')) return;
+    document.querySelectorAll('#achcont').forEach(root => {{
+      if (getComputedStyle(root).display === 'none') return;
+      const target = root.querySelector('.san-generated-line[data-san-line-id=""' + anchor.target + '""]');
+      const element = root.querySelector(elementSelector);
+      if (!target || !element || getComputedStyle(target).display === 'none') return;
+      const rootRect = root.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      const gap = Math.max(0, Number(anchor.gap == null ? 8 : anchor.gap) || 0);
+      let left = targetRect.left - rootRect.left;
+      if (anchor.side === 'left') left -= elementRect.width + gap;
+      else if (anchor.side === 'right') left += targetRect.width + gap;
+      let top = targetRect.top - rootRect.top;
+      if (anchor.align === 'center') top += (targetRect.height - elementRect.height) / 2;
+      else if (anchor.align === 'bottom') top += targetRect.height - elementRect.height;
+      root.style.setProperty('position', 'relative', 'important');
+      element.style.setProperty('position', 'absolute', 'important');
+      element.style.setProperty('left', Math.round(left + (Number(anchor.offsetX) || 0)) + 'px', 'important');
+      element.style.setProperty('top', Math.round(top + (Number(anchor.offsetY) || 0)) + 'px', 'important');
+      element.style.setProperty('margin', '0', 'important');
+      element.style.setProperty('z-index', '90', 'important');
+    }});
+  }});
+}};
 if (document.body.dataset.sanAnimationPreset === 'epicgames' || document.body.dataset.sanElements === 'epicgames') document.body.classList.add('san-webview-force-visible');
 document.body.classList.add('san-webview-fast-start');
 document.body.classList.toggle('san-webview-disable-san-transition', {JsBool(!usesSanTimeline)});
 document.body.classList.toggle('san-webview-no-secondary-icon', {JsBool(settings?.OverlayCustomShowSecondaryIcon != true)});
-document.body.classList.toggle('san-webview-has-cover', {JsBool(settings?.EnableGameCoverInOverlay == true && !string.IsNullOrWhiteSpace(coverImageUri))});
+document.body.classList.toggle('san-webview-has-cover', {JsBool(settings?.EnableGameCoverInOverlay == true)});
 document.body.classList.toggle('san-cover-left', {JsBool(settings?.GameCoverPosition == LocalOverlayCoverPosition.Left)});
 document.body.classList.toggle('san-cover-right', {JsBool(settings?.GameCoverPosition != LocalOverlayCoverPosition.Left)});
-if ({JsBool(settings?.EnableGameCoverInOverlay == true && !string.IsNullOrWhiteSpace(coverImageUri))}) {{
+if ({JsBool(settings?.EnableGameCoverInOverlay == true)}) {{
   const cover = document.createElement('div');
-  cover.className = 'san-game-cover ' + ({JsBool(settings?.GameCoverPosition == LocalOverlayCoverPosition.Left)} ? 'left' : 'right');
+  cover.className = 'san-game-cover ' + ({JsBool(settings?.GameCoverPosition == LocalOverlayCoverPosition.Left)} ? 'left' : 'right') + ({JsBool(string.IsNullOrWhiteSpace(coverImageUri))} ? ' empty' : '');
   const container = document.getElementById('achcont') || document.body;
   container.appendChild(cover);
 }}
@@ -2446,6 +3264,14 @@ document.querySelectorAll('#logo').forEach(el => {{
     el.style.backgroundImage = 'url(' + {JsString(logoUri)} + ')';
   }}
 }});
+window.requestAnimationFrame(sanApplyElementAnchors);
+if (Object.keys(sanElementAnchors || {{}}).length) {{
+  const sanAnchorResizeObserver = new ResizeObserver(() => window.requestAnimationFrame(sanApplyElementAnchors));
+  document.querySelectorAll('#achcont,.san-line-stack').forEach(el => sanAnchorResizeObserver.observe(el));
+  new MutationObserver(() => window.requestAnimationFrame(sanApplyElementAnchors))
+    .observe(document.body, {{ subtree: true, childList: true, characterData: true }});
+  window.addEventListener('resize', sanApplyElementAnchors);
+}}
 document.querySelectorAll('#achicon').forEach(img => {{
   const verify = () => {{
     if (!img.getAttribute('src') || (img.complete && img.naturalWidth === 0)) document.body.classList.add('san-webview-hide-icon-border');
@@ -2495,6 +3321,12 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
 </script>";
 
             var manualCss = SanitizeInlineCss(settings?.OverlayCustomManualElementCss);
+            var coverWidthCss = settings?.EnableGameCoverInOverlay == true
+                ? ".san-game-cover.left, .san-game-cover.right { width: var(--san-cover-width) !important; }"
+                : string.Empty;
+            var coverCenterCss = settings?.OverlayCustomAutoResizeToContent == true && settings.CenterGameCoverVertically
+                ? ".san-game-cover { top: 50% !important; bottom: auto !important; transform: translateY(-50%) !important; }"
+                : string.Empty;
             return $@"<!doctype html>
 <html>
 <head>
@@ -2507,6 +3339,8 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
 <style>{presetCss}</style>
 <style>{variables}</style>
 <style>{manualCss}</style>
+<style>{coverWidthCss}</style>
+<style>{coverCenterCss}</style>
 </head>
 <body {bodyAttrs} style=""background-color: transparent;"">
 <audio src=""""></audio>
@@ -3362,6 +4196,15 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 settings.OverlayCustomLine5FontSize,
                 settings.OverlayCustomLine6FontSize
             };
+            var fontFamilies = new[]
+            {
+                settings.OverlayCustomLine1FontFamily,
+                settings.OverlayCustomLine2FontFamily,
+                settings.OverlayCustomLine3FontFamily,
+                settings.OverlayCustomLine4FontFamily,
+                settings.OverlayCustomLine5FontFamily,
+                settings.OverlayCustomLine6FontFamily
+            };
             var spacing = new[]
             {
                 settings.OverlayCustomLine1Spacing,
@@ -3429,6 +4272,7 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 builder.Append("\"outlineSize\":").Append(Math.Max(0, Math.Min(8, outlineSize)).ToString("0.###", CultureInfo.InvariantCulture)).Append(",");
                 builder.Append("\"shadowSize\":").Append(Math.Max(0, Math.Min(24, shadowSize)).ToString("0.###", CultureInfo.InvariantCulture)).Append(",");
                 builder.Append("\"size\":").Append(Math.Max(8, Math.Min(34, sizes[i])).ToString("0.###", CultureInfo.InvariantCulture)).Append(",");
+                builder.Append("\"fontFamily\":").Append(JsString(IsDefaultFontFamily(fontFamilies[i]) ? string.Empty : fontFamilies[i].Trim())).Append(",");
                 var lineSpacing = spacing[i] > 0
                     ? spacing[i]
                     : (settings.OverlayCustomLineSpacing > 0 ? settings.OverlayCustomLineSpacing : 3);
@@ -3707,6 +4551,17 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
             return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
         }
 
+        private static string CssBrushColor(string value, string fallback)
+        {
+            var color = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+            if (color.Length == 9 && color[0] == '#')
+            {
+                return $"#{color.Substring(3, 6)}{color.Substring(1, 2)}";
+            }
+
+            return color;
+        }
+
         private static string CssOptionalColor(string value)
         {
             var color = value?.Trim();
@@ -3933,7 +4788,9 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
         {
             if (string.Equals(style, NotificationStyleCustom, StringComparison.OrdinalIgnoreCase))
             {
-                return BuildCustomOverlayContent(title, gameName, achievementName, rawIconPath, providerKey, localSettings, overlayScale, game, achievementDescription, achievementPoints, achievementRarity, achievementTrophy);
+                var customContent = BuildCustomOverlayContent(title, gameName, achievementName, rawIconPath, providerKey, localSettings, overlayScale, game, achievementDescription, achievementPoints, achievementRarity, achievementTrophy);
+                ApplyCustomTextFormattingMode(customContent, localSettings);
+                return customContent;
             }
 
             var (backgroundBrush, borderBrush, accentBrush) = ResolveOverlayBrushes(style);
@@ -4256,7 +5113,7 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
             return offsets != null && !string.IsNullOrWhiteSpace(key) && offsets.TryGetValue(key, out var offset) && offset.HasAbsolutePosition;
         }
 
-        private static bool TryAddAbsoluteManualElement(Canvas layer, FrameworkElement element, IDictionary<string, ManualElementAdjustment> offsets, string key)
+        private static bool TryAddAbsoluteManualElement(Canvas layer, FrameworkElement element, IDictionary<string, ManualElementAdjustment> offsets, string key, bool allowAutoHeight = false)
         {
             if (layer == null || element == null || offsets == null || string.IsNullOrWhiteSpace(key) ||
                 !offsets.TryGetValue(key, out var offset) || !offset.HasAbsolutePosition)
@@ -4274,14 +5131,156 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
 
             if (offset.Height > 0)
             {
-                element.Height = offset.Height;
-                ApplyManualChildHeight(element, offset.Height);
+                if (allowAutoHeight)
+                {
+                    element.Height = double.NaN;
+                    element.MinHeight = offset.Height;
+                }
+                else
+                {
+                    element.Height = offset.Height;
+                    ApplyManualChildHeight(element, offset.Height);
+                }
             }
 
             Canvas.SetLeft(element, offset.Left);
             Canvas.SetTop(element, offset.Top);
             layer.Children.Add(element);
             return true;
+        }
+
+        private static void ConfigureAbsoluteManualReflow(
+            Canvas layer,
+            IDictionary<string, FrameworkElement> lines,
+            IDictionary<string, ManualElementAdjustment> offsets,
+            FrameworkElement primaryIcon,
+            FrameworkElement secondaryIcon,
+            LocalSettings settings)
+        {
+            if (layer == null || lines == null || lines.Count == 0)
+            {
+                return;
+            }
+
+            JObject anchors = null;
+            try
+            {
+                anchors = string.IsNullOrWhiteSpace(settings.OverlayCustomElementAnchorsJson)
+                    ? null
+                    : JObject.Parse(settings.OverlayCustomElementAnchorsJson);
+            }
+            catch (Newtonsoft.Json.JsonException)
+            {
+                anchors = null;
+            }
+
+            var arranging = false;
+            Action arrange = () =>
+            {
+                if (arranging)
+                {
+                    return;
+                }
+
+                arranging = true;
+                try
+                {
+                    var addedHeight = 0d;
+                    foreach (var entry in lines
+                        .Where(pair => offsets.TryGetValue(pair.Key, out var adjustment) && adjustment.HasAbsolutePosition)
+                        .OrderBy(pair => offsets[pair.Key].Top))
+                    {
+                        var adjustment = offsets[entry.Key];
+                        var baseHeight = Math.Max(1, adjustment.Height);
+                        var left = adjustment.Left;
+                        var width = Math.Max(1, adjustment.Width);
+                        foreach (var obstacle in layer.Children.OfType<FrameworkElement>().Where(element => !lines.Values.Contains(element)))
+                        {
+                            var obstacleLeft = Canvas.GetLeft(obstacle);
+                            var obstacleTop = Canvas.GetTop(obstacle);
+                            if (double.IsNaN(obstacleLeft) || double.IsNaN(obstacleTop))
+                            {
+                                continue;
+                            }
+
+                            obstacle.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                            var obstacleWidth = Math.Max(obstacle.ActualWidth, obstacle.DesiredSize.Width);
+                            var obstacleHeight = Math.Max(obstacle.ActualHeight, obstacle.DesiredSize.Height);
+                            if (adjustment.Top >= obstacleTop + obstacleHeight || adjustment.Top + baseHeight <= obstacleTop ||
+                                left >= obstacleLeft + obstacleWidth || left + width <= obstacleLeft)
+                            {
+                                continue;
+                            }
+
+                            if (obstacleLeft > left)
+                            {
+                                width = Math.Max(1, obstacleLeft - 6 - left);
+                            }
+                            else
+                            {
+                                var right = left + width;
+                                left = obstacleLeft + obstacleWidth + 6;
+                                width = Math.Max(1, right - left);
+                            }
+                        }
+
+                        Canvas.SetLeft(entry.Value, left);
+                        entry.Value.Width = width;
+                        Canvas.SetTop(entry.Value, adjustment.Top + addedHeight);
+                        entry.Value.Measure(new Size(width, double.PositiveInfinity));
+                        var actualHeight = Math.Max(baseHeight, Math.Max(entry.Value.ActualHeight, entry.Value.DesiredSize.Height));
+                        addedHeight += Math.Max(0, actualHeight - baseHeight);
+                    }
+
+                    var requiredBottom = lines
+                        .Where(pair => offsets.ContainsKey(pair.Key))
+                        .Select(pair => Canvas.GetTop(pair.Value) + Math.Max(pair.Value.ActualHeight, pair.Value.DesiredSize.Height))
+                        .DefaultIfEmpty(0)
+                        .Max();
+                    layer.MinHeight = Math.Max(layer.MinHeight, requiredBottom + 12);
+
+                    ApplyAnchor("primaryIcon", primaryIcon);
+                    ApplyAnchor("secondaryIcon", secondaryIcon);
+                }
+                finally
+                {
+                    arranging = false;
+                }
+            };
+
+            void ApplyAnchor(string id, FrameworkElement element)
+            {
+                if (element == null || !offsets.TryGetValue(id, out var elementOffset) || !elementOffset.HasAbsolutePosition || anchors?[id] is not JObject anchor)
+                {
+                    return;
+                }
+
+                var targetId = anchor.Value<string>("target");
+                if (string.IsNullOrWhiteSpace(targetId) || !lines.TryGetValue(targetId, out var target))
+                {
+                    return;
+                }
+
+                var targetLeft = Canvas.GetLeft(target);
+                var targetTop = Canvas.GetTop(target);
+                var targetWidth = Math.Max(target.ActualWidth, target.DesiredSize.Width);
+                var targetHeight = Math.Max(target.ActualHeight, target.DesiredSize.Height);
+                var elementWidth = Math.Max(element.ActualWidth, element.DesiredSize.Width);
+                var elementHeight = Math.Max(element.ActualHeight, element.DesiredSize.Height);
+                var side = anchor.Value<string>("side") ?? "left";
+                var align = anchor.Value<string>("align") ?? "center";
+                var gap = Math.Max(0, anchor.Value<double?>("gap") ?? 8);
+                var left = side == "right" ? targetLeft + targetWidth + gap : side == "overlay" ? targetLeft : targetLeft - elementWidth - gap;
+                var top = align == "bottom" ? targetTop + targetHeight - elementHeight : align == "top" ? targetTop : targetTop + ((targetHeight - elementHeight) / 2);
+                Canvas.SetLeft(element, left + (anchor.Value<double?>("offsetX") ?? 0));
+                Canvas.SetTop(element, top + (anchor.Value<double?>("offsetY") ?? 0));
+            }
+
+            layer.Loaded += (_, __) => layer.Dispatcher.BeginInvoke(arrange);
+            foreach (var line in lines.Values)
+            {
+                line.SizeChanged += (_, __) => layer.Dispatcher.BeginInvoke(arrange);
+            }
         }
 
         private static void ApplyManualChildWidth(FrameworkElement element, double width)
@@ -4335,6 +5334,16 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
             var timestamp = DateTime.Now;
             var sourceName = game?.Source?.Name ?? string.Empty;
             var manualOffsets = ParseManualElementCssOffsets(settings?.OverlayCustomManualElementCss);
+            // Cover width is a first-class setting. Drag-edit CSS may position the
+            // cover and retain its height, but must not make GameCoverWidth inert.
+            if (manualOffsets.TryGetValue("coverLeft", out var manualLeftCover))
+            {
+                manualLeftCover.Width = 0;
+            }
+            if (manualOffsets.TryGetValue("coverRight", out var manualRightCover))
+            {
+                manualRightCover.Width = 0;
+            }
 
             var useSanPresetHints = IsSanTransitionStyle(settings?.UnlockOverlayTransitionStyle ?? LocalUnlockOverlayTransitionStyle.Fade) ||
                 !string.IsNullOrWhiteSpace(settings?.OverlayCustomSanElementPresetId);
@@ -4407,13 +5416,13 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
             var contentPadding = isCompactSanCard
                 ? new Thickness(Math.Max(5, 6 * overlayScale), Math.Max(4, 5 * overlayScale), Math.Max(7, 8 * overlayScale), Math.Max(4, 5 * overlayScale))
                 : new Thickness(16);
+            var borderWidth = Math.Max(0.5, Math.Min(12, settings?.OverlayCustomBorderWidth ?? 1.5)) * overlayScale;
 
             var root = new Border
             {
                 Width = customWidth,
                 Background = backgroundBrush,
-                BorderBrush = borderBrush,
-                BorderThickness = (settings?.OverlayCustomShowBorder != false) ? new Thickness(1.5) : new Thickness(0),
+                BorderThickness = new Thickness(0),
                 CornerRadius = new CornerRadius(cornerRadius),
                 Padding = new Thickness(0),
                 ClipToBounds = true
@@ -4452,6 +5461,8 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
             var secondaryIconAbsolute = HasAbsoluteManualElementAdjustment(manualOffsets, "secondaryIcon");
             var coverLeftAbsolute = HasAbsoluteManualElementAdjustment(manualOffsets, "coverLeft");
             var coverRightAbsolute = HasAbsoluteManualElementAdjustment(manualOffsets, "coverRight");
+            var absoluteLines = new Dictionary<string, FrameworkElement>(StringComparer.OrdinalIgnoreCase);
+            FrameworkElement secondaryIconElement = null;
 
             var grid = new Grid();
             grid.Margin = contentPadding;
@@ -4493,7 +5504,10 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                     coverHeight,
                     Math.Max(6, cornerRadius / 2.5),
                     new Thickness(0, 0, 14, 0),
-                    settings?.OverlayCustomCoverImagePath);
+                    settings?.OverlayCustomCoverImagePath,
+                    settings?.OverlayCustomShowCoverBackground != false,
+                    settings?.OverlayCustomCoverBackgroundColor,
+                    settings?.OverlayCustomAutoResizeToContent == true && settings.CenterGameCoverVertically);
                 if (leftCover != null)
                 {
                     if (!TryAddAbsoluteManualElement(absoluteLayer, leftCover, manualOffsets, "coverLeft"))
@@ -4503,12 +5517,16 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                         grid.Children.Add(leftCover);
                         currentColumn++;
                     }
+                    else if (settings?.OverlayCustomAutoResizeToContent == true && settings.CenterGameCoverVertically)
+                    {
+                        CenterCanvasElementVertically(root, leftCover);
+                    }
                 }
             }
 
-            var iconBackground = isCompactSanCard && settings?.OverlayCustomIconSource == LocalOverlayIconSource.TrophyIcon
-                ? accentBrush
-                : new SolidColorBrush(Color.FromArgb(36, 255, 255, 255));
+            var iconBackground = settings?.OverlayCustomShowIconBackground != false
+                ? ParseBrushOrDefault(settings?.OverlayCustomIconBackgroundColor, Color.FromArgb(36, 255, 255, 255))
+                : Brushes.Transparent;
 
             var icon = new Border
             {
@@ -4544,11 +5562,14 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 {
                     Width = secondaryIconSize,
                     Height = secondaryIconSize,
-                    Background = new SolidColorBrush(Color.FromArgb(24, 255, 255, 255)),
+                    Background = settings?.OverlayCustomShowSecondaryIconBackground != false
+                        ? ParseBrushOrDefault(settings?.OverlayCustomSecondaryIconBackgroundColor, Color.FromArgb(24, 255, 255, 255))
+                        : Brushes.Transparent,
                     CornerRadius = new CornerRadius(secondaryIconCornerRadius),
                     Margin = new Thickness(0, 0, isCompactSanCard ? Math.Max(6, 8 * overlayScale) : 14, 0),
                     Child = CreateCustomOverlayIconContent(settings, rawIconPath, providerKey, titleBrush, secondaryIconSize, titleSize, rarityKey, settings?.OverlayCustomSecondaryIconSource ?? LocalOverlayIconSource.AchievementIcon, secondaryIconCornerRadius)
                 };
+                secondaryIconElement = secondaryIcon;
                 if (settings?.OverlayCustomShowSecondaryIconRarityGlow == true)
                 {
                     var glow = CreateIconRarityGlowEffect(rarityKey);
@@ -4601,10 +5622,14 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 if (line != null)
                 {
                     ApplyCustomLineTextEffect(line, settings, 1);
-                    if (!TryAddAbsoluteManualElement(absoluteLayer, line, manualOffsets, "line1"))
+                    if (!TryAddAbsoluteManualElement(absoluteLayer, line, manualOffsets, "line1", wrapAllText))
                     {
                         ApplyManualElementOffset(line, manualOffsets, "line1");
                         textStack.Children.Add(line);
+                    }
+                    else
+                    {
+                        absoluteLines["line1"] = line;
                     }
                 }
             }
@@ -4638,10 +5663,14 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 if (line != null)
                 {
                     ApplyCustomLineTextEffect(line, settings, 2);
-                    if (!TryAddAbsoluteManualElement(absoluteLayer, line, manualOffsets, "line2"))
+                    if (!TryAddAbsoluteManualElement(absoluteLayer, line, manualOffsets, "line2", wrapAllText))
                     {
                         ApplyManualElementOffset(line, manualOffsets, "line2");
                         textStack.Children.Add(line);
+                    }
+                    else
+                    {
+                        absoluteLines["line2"] = line;
                     }
                 }
             }
@@ -4675,10 +5704,14 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 if (line != null)
                 {
                     ApplyCustomLineTextEffect(line, settings, 3);
-                    if (!TryAddAbsoluteManualElement(absoluteLayer, line, manualOffsets, "line3"))
+                    if (!TryAddAbsoluteManualElement(absoluteLayer, line, manualOffsets, "line3", wrapAllText))
                     {
                         ApplyManualElementOffset(line, manualOffsets, "line3");
                         textStack.Children.Add(line);
+                    }
+                    else
+                    {
+                        absoluteLines["line3"] = line;
                     }
                 }
             }
@@ -4689,10 +5722,14 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 if (line != null)
                 {
                     ApplyCustomLineTextEffect(line, settings, 4);
-                    if (!TryAddAbsoluteManualElement(absoluteLayer, line, manualOffsets, "line4"))
+                    if (!TryAddAbsoluteManualElement(absoluteLayer, line, manualOffsets, "line4", wrapAllText))
                     {
                         ApplyManualElementOffset(line, manualOffsets, "line4");
                         textStack.Children.Add(line);
+                    }
+                    else
+                    {
+                        absoluteLines["line4"] = line;
                     }
                 }
             }
@@ -4703,10 +5740,14 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 if (line != null)
                 {
                     ApplyCustomLineTextEffect(line, settings, 5);
-                    if (!TryAddAbsoluteManualElement(absoluteLayer, line, manualOffsets, "line5"))
+                    if (!TryAddAbsoluteManualElement(absoluteLayer, line, manualOffsets, "line5", wrapAllText))
                     {
                         ApplyManualElementOffset(line, manualOffsets, "line5");
                         textStack.Children.Add(line);
+                    }
+                    else
+                    {
+                        absoluteLines["line5"] = line;
                     }
                 }
             }
@@ -4717,10 +5758,14 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 if (line != null)
                 {
                     ApplyCustomLineTextEffect(line, settings, 6);
-                    if (!TryAddAbsoluteManualElement(absoluteLayer, line, manualOffsets, "line6"))
+                    if (!TryAddAbsoluteManualElement(absoluteLayer, line, manualOffsets, "line6", wrapAllText))
                     {
                         ApplyManualElementOffset(line, manualOffsets, "line6");
                         textStack.Children.Add(line);
+                    }
+                    else
+                    {
+                        absoluteLines["line6"] = line;
                     }
                 }
             }
@@ -4737,11 +5782,14 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 {
                     Width = secondaryIconSize,
                     Height = secondaryIconSize,
-                    Background = new SolidColorBrush(Color.FromArgb(24, 255, 255, 255)),
+                    Background = settings?.OverlayCustomShowSecondaryIconBackground != false
+                        ? ParseBrushOrDefault(settings?.OverlayCustomSecondaryIconBackgroundColor, Color.FromArgb(24, 255, 255, 255))
+                        : Brushes.Transparent,
                     CornerRadius = new CornerRadius(secondaryIconCornerRadius),
                     Margin = new Thickness(isCompactSanCard ? Math.Max(6, 8 * overlayScale) : 14, 0, 0, 0),
                     Child = CreateCustomOverlayIconContent(settings, rawIconPath, providerKey, titleBrush, secondaryIconSize, titleSize, rarityKey, settings?.OverlayCustomSecondaryIconSource ?? LocalOverlayIconSource.AchievementIcon, secondaryIconCornerRadius)
                 };
+                secondaryIconElement = secondaryIcon;
                 if (settings?.OverlayCustomShowSecondaryIconRarityGlow == true)
                 {
                     var glow = CreateIconRarityGlowEffect(rarityKey);
@@ -4767,7 +5815,10 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                     coverHeight,
                     Math.Max(6, cornerRadius / 2.5),
                     new Thickness(14, 0, 0, 0),
-                    settings?.OverlayCustomCoverImagePath);
+                    settings?.OverlayCustomCoverImagePath,
+                    settings?.OverlayCustomShowCoverBackground != false,
+                    settings?.OverlayCustomCoverBackgroundColor,
+                    settings?.OverlayCustomAutoResizeToContent == true && settings.CenterGameCoverVertically);
                 if (rightCover != null)
                 {
                     if (!TryAddAbsoluteManualElement(absoluteLayer, rightCover, manualOffsets, "coverRight"))
@@ -4775,6 +5826,10 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                         ApplyManualElementOffset(rightCover, manualOffsets, "coverRight");
                         Grid.SetColumn(rightCover, currentColumn);
                         grid.Children.Add(rightCover);
+                    }
+                    else if (settings?.OverlayCustomAutoResizeToContent == true && settings.CenterGameCoverVertically)
+                    {
+                        CenterCanvasElementVertically(root, rightCover);
                     }
                 }
             }
@@ -4784,9 +5839,25 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
             {
                 container.Children.Add(absoluteLayer);
             }
+            ConfigureAbsoluteManualReflow(absoluteLayer, absoluteLines, manualOffsets, icon, secondaryIconElement, settings);
             root.Child = container;
-            ApplySanTemplateAnimation(root, icon, textStack, settings);
-            return root;
+            root.Margin = new Thickness(borderWidth);
+            var visualRoot = new Grid();
+            visualRoot.Children.Add(root);
+            if (settings?.OverlayCustomShowBorder != false)
+            {
+                visualRoot.Children.Add(new Border
+                {
+                    BorderBrush = borderBrush,
+                    BorderThickness = new Thickness(borderWidth),
+                    CornerRadius = new CornerRadius(cornerRadius + borderWidth),
+                    Background = Brushes.Transparent,
+                    IsHitTestVisible = false
+                });
+            }
+
+            ApplySanTemplateAnimation(visualRoot, icon, textStack, settings);
+            return visualRoot;
         }
 
         private FrameworkElement BuildSanXqjanCustomOverlayContent(
@@ -4891,6 +5962,8 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
 
             AddSanTemplateLine(
                 textStack,
+                settings,
+                1,
                 settings?.OverlayCustomTitleTemplate,
                 "Achievement unlocked",
                 title,
@@ -4911,6 +5984,8 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
 
             AddSanTemplateLine(
                 textStack,
+                settings,
+                2,
                 settings?.OverlayCustomGameNameTemplate,
                 "<achievementName>",
                 title,
@@ -4933,6 +6008,8 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
             {
                 AddSanTemplateLine(
                     textStack,
+                    settings,
+                    3,
                     settings?.OverlayCustomAchievementTemplate,
                     "<achievementDescription>",
                     title,
@@ -4984,6 +6061,8 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
 
         private static void AddSanTemplateLine(
             Panel target,
+            LocalSettings settings,
+            int lineIndex,
             string template,
             string fallback,
             string title,
@@ -5028,6 +6107,7 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 suppressWhenTemplateEmpty: true);
             if (line != null)
             {
+                ApplyCustomLineTextEffect(line, settings, lineIndex);
                 line.TextTrimming = TextTrimming.CharacterEllipsis;
                 target.Children.Add(line);
             }
@@ -5233,6 +6313,7 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 suppressWhenTemplateEmpty: true);
             if (titleLine != null)
             {
+                ApplyCustomLineTextEffect(titleLine, settings, 1);
                 titleLine.TextTrimming = TextTrimming.CharacterEllipsis;
                 textStack.Children.Add(titleLine);
             }
@@ -5263,6 +6344,7 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 suppressWhenTemplateEmpty: true);
             if (detailLine != null)
             {
+                ApplyCustomLineTextEffect(detailLine, settings, 2);
                 detailLine.TextTrimming = TextTrimming.CharacterEllipsis;
                 textStack.Children.Add(detailLine);
             }
@@ -5352,6 +6434,7 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 suppressWhenTemplateEmpty: false);
             if (line != null)
             {
+                ApplyCustomLineTextEffect(line, settings, 1);
                 line.VerticalAlignment = VerticalAlignment.Center;
                 line.TextTrimming = TextTrimming.CharacterEllipsis;
                 Grid.SetColumn(line, 1);
@@ -6171,6 +7254,61 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
             return hasVisibleContent ? textBlock : null;
         }
 
+        private static string ResolveLineFontFamily(LocalSettings settings, int lineIndex)
+        {
+            if (settings == null)
+            {
+                return "Default";
+            }
+
+            switch (lineIndex)
+            {
+                case 1: return settings.OverlayCustomLine1FontFamily;
+                case 2: return settings.OverlayCustomLine2FontFamily;
+                case 3: return settings.OverlayCustomLine3FontFamily;
+                case 4: return settings.OverlayCustomLine4FontFamily;
+                case 5: return settings.OverlayCustomLine5FontFamily;
+                case 6: return settings.OverlayCustomLine6FontFamily;
+                default: return "Default";
+            }
+        }
+
+        private static bool IsDefaultFontFamily(string fontFamily)
+        {
+            return string.IsNullOrWhiteSpace(fontFamily) ||
+                   string.Equals(fontFamily.Trim(), "Default", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void ApplyCustomTextFormattingMode(FrameworkElement content, LocalSettings settings)
+        {
+            if (content == null || settings == null)
+            {
+                return;
+            }
+
+            switch (settings.OverlayCustomTextFormattingMode)
+            {
+                case LocalOverlayTextFormattingMode.Ideal:
+                    TextOptions.SetTextFormattingMode(content, TextFormattingMode.Ideal);
+                    break;
+                case LocalOverlayTextFormattingMode.Display:
+                    TextOptions.SetTextFormattingMode(content, TextFormattingMode.Display);
+                    break;
+            }
+        }
+
+        private static string ResolveCssTextRendering(LocalOverlayTextFormattingMode mode)
+        {
+            switch (mode)
+            {
+                case LocalOverlayTextFormattingMode.Ideal:
+                    return "geometricPrecision";
+                case LocalOverlayTextFormattingMode.Display:
+                    return "optimizeLegibility";
+                default:
+                    return string.Empty;
+            }
+        }
 
         private static void ApplyCustomLineTextEffect(TextBlock line, LocalSettings settings, int lineIndex)
         {
@@ -6201,6 +7339,18 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                     outlineEnabled = settings.OverlayCustomLine6OutlineEnabled; shadowEnabled = settings.OverlayCustomLine6ShadowEnabled; outlineColor = settings.OverlayCustomLine6OutlineColor; shadowColor = settings.OverlayCustomLine6ShadowColor; outlineSize = settings.OverlayCustomLine6OutlineSize; shadowSize = settings.OverlayCustomLine6ShadowSize; break;
                 default:
                     return;
+            }
+
+            var fontFamily = ResolveLineFontFamily(settings, lineIndex);
+            if (!IsDefaultFontFamily(fontFamily))
+            {
+                try
+                {
+                    line.FontFamily = new FontFamily(fontFamily.Trim());
+                }
+                catch
+                {
+                }
             }
 
             if (shadowEnabled)
@@ -6341,7 +7491,7 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 case "points":
                     return achievementPoints?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
                 case "rarity":
-                    return achievementRarity ?? string.Empty;
+                    return ResolveRarityWildcardText(achievementRarity);
                 case "trophy":
                     return FormatTrophyText(achievementTrophy);
                 case "provider":
@@ -6361,6 +7511,20 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 default:
                     return fallback;
             }
+        }
+
+        private static string ResolveRarityWildcardText(string rarity)
+        {
+            if (string.IsNullOrWhiteSpace(rarity))
+            {
+                return string.Empty;
+            }
+
+            // The notification pipeline keeps the tier alongside the percentage so rarity
+            // badges and score tokens can resolve it without guessing. The legacy <rarity>
+            // wildcard, however, has always represented the global unlock percentage only.
+            var percent = Regex.Match(rarity, @"<?\s*[-+]?\d+(?:[.,]\d+)?\s*%");
+            return percent.Success ? percent.Value.Trim() : rarity;
         }
 
         private sealed class NotificationScoreContext
@@ -6837,14 +8001,21 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
                 }
             }
 
+            // Keep the placeholder in the same visual footprint as a resolved
+            // achievement image. Otherwise selecting a preview achievement makes
+            // the icon appear to jump from a title-sized glyph to the full box.
             return new TextBlock
             {
                 Text = "🏆",
                 Foreground = fallbackIconBrush,
-                FontSize = Math.Max(14, titleSize + 2),
+                FontSize = Math.Max(14, iconSize * 0.72),
                 FontWeight = FontWeights.Bold,
+                Width = iconSize,
+                Height = iconSize,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Center,
+                TextAlignment = TextAlignment.Center,
+                LineHeight = iconSize
             };
         }
 
@@ -6959,6 +8130,26 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
         private static string ResolveRarityKey(string rarityText, int? points)
         {
             var value = rarityText?.Trim().ToLowerInvariant() ?? string.Empty;
+            // Providers commonly pass the global unlock percentage as the rarity text
+            // (for example, "12.5% - Rare"). Resolve that first so notification
+            // badges use the percentage just like the main window, independent of
+            // localized tier text and achievement points.
+            var rarityPercent = TryParseRarityPercent(rarityText);
+            if (rarityPercent.HasValue)
+            {
+                switch (PercentRarityHelper.GetRarityTier(rarityPercent.Value))
+                {
+                    case RarityTier.UltraRare:
+                        return "UltraRare";
+                    case RarityTier.Rare:
+                        return "Rare";
+                    case RarityTier.Uncommon:
+                        return "Uncommon";
+                    default:
+                        return "Common";
+                }
+            }
+
             if (value.Contains("ultra") || value.Contains("platinum")) return "UltraRare";
             if (value.Contains("uncommon")) return "Uncommon";
             if (value.Contains("rare")) return "Rare";
@@ -7286,29 +8477,61 @@ if ({JsBool(settings?.OverlayCustomAutoResizeToContent == true)}) {{
             }
         }
 
-        private FrameworkElement CreateGameCoverElement(Game game, double width, double height, double cornerRadius, Thickness margin, string customImagePath = null)
+        private FrameworkElement CreateGameCoverElement(Game game, double width, double height, double cornerRadius, Thickness margin, string customImagePath = null, bool showBackground = true, string backgroundColor = null, bool centerVertically = false)
         {
             var coverSource = TryCreateOverlayImageSource(customImagePath) ?? TryCreatePlayniteGameImageSource(game, useBackground: false);
-            if (coverSource == null)
-            {
-                return null;
-            }
-
-            return new Border
+            var cover = new Border
             {
                 Width = width,
                 Height = height,
                 CornerRadius = new CornerRadius(cornerRadius),
                 Margin = margin,
-                Background = new SolidColorBrush(Color.FromArgb(28, 255, 255, 255)),
-                Child = new Image
+                VerticalAlignment = centerVertically ? VerticalAlignment.Center : VerticalAlignment.Stretch,
+                Background = showBackground
+                    ? ParseBrushOrDefault(backgroundColor, Color.FromArgb(28, 255, 255, 255))
+                    : Brushes.Transparent
+            };
+            cover.Child = coverSource != null
+                ? (FrameworkElement)new Image
                 {
                     Source = coverSource,
-                    Stretch = Stretch.UniformToFill,
+                    Stretch = Stretch.Uniform,
                     Width = width,
                     Height = height
                 }
+                : new TextBlock
+                {
+                    Text = "COVER",
+                    Foreground = new SolidColorBrush(Color.FromRgb(174, 184, 196)),
+                    FontSize = 12,
+                    FontWeight = FontWeights.Bold,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+            return cover;
+        }
+
+        private static void CenterCanvasElementVertically(FrameworkElement root, FrameworkElement element)
+        {
+            if (root == null || element == null)
+            {
+                return;
+            }
+
+            Action update = () =>
+            {
+                var rootHeight = root.ActualHeight > 0 ? root.ActualHeight : root.Height;
+                var elementHeight = element.ActualHeight > 0 ? element.ActualHeight : element.Height;
+                if (!double.IsNaN(rootHeight) && !double.IsInfinity(rootHeight) && rootHeight > 0 &&
+                    !double.IsNaN(elementHeight) && !double.IsInfinity(elementHeight) && elementHeight > 0)
+                {
+                    Canvas.SetTop(element, Math.Max(0, (rootHeight - elementHeight) / 2));
+                }
             };
+
+            root.SizeChanged += (_, __) => update();
+            element.SizeChanged += (_, __) => update();
+            update();
         }
 
         private ImageSource TryCreateOverlayImageSource(string rawIconPath)

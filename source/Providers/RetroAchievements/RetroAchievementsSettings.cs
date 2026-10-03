@@ -21,12 +21,26 @@ namespace PlayniteAchievements.Providers.RetroAchievements
         private bool _enableFuzzyNameMatching = true;
         private bool _enableRaSubsetScanning = true;
         private bool _enableAutomaticCapstoneAssignment = false;
-        private bool _enableActiveMonitoring = false;
-        private int _monitoringIntervalSeconds = 300;
         private Dictionary<Guid, int> _raGameIdOverrides = new Dictionary<Guid, int>();
+        private Dictionary<string, string> _emulatorLogPathOverrides =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private bool _enableActiveMonitoring = true;
+        private int _monitoringIntervalSeconds = 30;
 
         /// <inheritdoc />
         public override string ProviderKey => "RetroAchievements";
+
+        public bool EnableActiveMonitoring
+        {
+            get => _enableActiveMonitoring;
+            set => SetValue(ref _enableActiveMonitoring, value);
+        }
+
+        public int MonitoringIntervalSeconds
+        {
+            get => _monitoringIntervalSeconds;
+            set => SetValue(ref _monitoringIntervalSeconds, Math.Max(5, value));
+        }
 
         /// <summary>
         /// Gets or sets the RetroAchievements username.
@@ -47,7 +61,8 @@ namespace PlayniteAchievements.Providers.RetroAchievements
         }
 
         /// <summary>
-        /// RetroAchievements rarity stats mode: "casual", "hardcore", or "combined".
+        /// RetroAchievements rarity stats mode for locked achievements: "casual" or "hardcore".
+        /// Unlocked achievements derive rarity from their own unlock mode instead.
         /// </summary>
         public string RaRarityStats
         {
@@ -56,7 +71,6 @@ namespace PlayniteAchievements.Providers.RetroAchievements
             {
                 var mode = (value ?? string.Empty).Trim();
                 if (string.Equals(mode, "hardcore", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(mode, "combined", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(mode, "casual", StringComparison.OrdinalIgnoreCase))
                 {
                     SetValue(ref _raRarityStats, mode.ToLowerInvariant());
@@ -150,25 +164,6 @@ namespace PlayniteAchievements.Providers.RetroAchievements
         }
 
         /// <summary>
-        /// When true, polls the RetroAchievements API during gameplay to detect newly unlocked
-        /// achievements and show the configured real-time unlock notification.
-        /// </summary>
-        public bool EnableActiveMonitoring
-        {
-            get => _enableActiveMonitoring;
-            set => SetValue(ref _enableActiveMonitoring, value);
-        }
-
-        /// <summary>
-        /// How often to poll the RetroAchievements API while a monitored game is running.
-        /// </summary>
-        public int MonitoringIntervalSeconds
-        {
-            get => _monitoringIntervalSeconds;
-            set => SetValue(ref _monitoringIntervalSeconds, Math.Max(30, Math.Min(3600, value)));
-        }
-
-        /// <summary>
         /// Manual overrides for RetroAchievements game IDs.
         /// Key is Playnite Game ID, value is RetroAchievements game ID.
         /// Used when automatic hash-based or name-based matching fails.
@@ -178,6 +173,19 @@ namespace PlayniteAchievements.Providers.RetroAchievements
         {
             get => _raGameIdOverrides;
             set => SetValue(ref _raGameIdOverrides, value ?? new Dictionary<Guid, int>());
+        }
+
+        /// <summary>
+        /// Per-emulator log-file path overrides for instant in-game unlock tracking.
+        /// Key is the emulator key from <c>RaEmulatorLogRegistry</c> (for example "retroarch");
+        /// value is the log file path to watch instead of the auto-detected default.
+        /// Empty by default so removed entries fall back to auto-detection.
+        /// </summary>
+        public Dictionary<string, string> EmulatorLogPathOverrides
+        {
+            get => _emulatorLogPathOverrides;
+            set => SetValue(ref _emulatorLogPathOverrides,
+                value ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
         }
     }
 }

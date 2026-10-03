@@ -24,14 +24,16 @@ namespace PlayniteAchievements.Services.ThemeMigration
         private const string BackupFolderName = "PlayniteAchievements_backup";
         private const string ManifestFileName = "backup_manifest.txt";
 
-        // Extension ID from extension.yaml — used for [id].IsInstalled bindings in themes
+        // Extension ID from extension.yaml — used for [id].IsInstalled bindings in themes.
         private const string PluginExtensionId = "PlayniteAchievementsSantodan";
 
-        // SourceName registered with Playnite via AddCustomElementSupport — used for control-name prefixes
+        // SourceName registered with Playnite via AddCustomElementSupport.
         private const string ThemeSourceName = "PlayniteAchievements";
 
-        private const string PluginStatusOriginalForkPattern = @"PluginStatus\s+(?:Plugin|Id)\s*=\s*['\""]?PlayniteAchievements(?!Santodan)";
-        private const string PluginSettingsForkIdPattern = @"PluginSettings\s+Plugin\s*=\s*['\""]?PlayniteAchievementsSantodan['\""]?";
+        private const string PluginStatusOriginalForkPattern =
+            @"PluginStatus\s+(?:Plugin|Id)\s*=\s*['\""]?PlayniteAchievements(?!Santodan)";
+        private const string PluginSettingsForkIdPattern =
+            @"PluginSettings\s+Plugin\s*=\s*['\""]?PlayniteAchievementsSantodan['\""]?";
 
         /// <summary>
         /// Binary file extensions that should never be processed.
@@ -115,10 +117,14 @@ namespace PlayniteAchievements.Services.ThemeMigration
 
                 var result = await Task.Run(() =>
                 {
-                    return PerformMigration(themePath, backupPath, mode, customSelection, hasExistingBackup);
+                    return PerformMigration(
+                        themePath,
+                        backupPath,
+                        mode,
+                        customSelection,
+                        hasExistingBackup);
                 });
 
-                // If no files needed changes, report success.
                 if (result.FilesProcessed == 0)
                 {
                     _logger.Info($"No files needed migration changes for: {themePath}");
@@ -247,7 +253,12 @@ namespace PlayniteAchievements.Services.ThemeMigration
         /// <summary>
         /// Performs the migration: backs up modified files and applies replacements.
         /// </summary>
-        private MigrationResult PerformMigration(string themePath, string backupPath, MigrationMode mode, CustomMigrationSelection customSelection, bool hasExistingBackup)
+        private MigrationResult PerformMigration(
+            string themePath,
+            string backupPath,
+            MigrationMode mode,
+            CustomMigrationSelection customSelection,
+            bool hasExistingBackup)
         {
             var backedUpFiles = new List<string>();
             int filesProcessed = 0;
@@ -284,7 +295,6 @@ namespace PlayniteAchievements.Services.ThemeMigration
 
                 if (!hasExistingBackup)
                 {
-                    // First migration run: create selective backup before any edits.
                     BackupFile(file, themePath, backupPath, backedUpFiles);
                     _logger.Info($"Backing up file with {replacementCount} references: {GetRelativePath(file.FullName, themePath)}");
                 }
@@ -300,15 +310,9 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 }
             }
 
-            // After all content replacements are done, create PlayniteAchievements-named copies
-            // of any SuccessStory-named or SSHelper-named XAML files.  The migration rewrites
-            // filename references inside other files (e.g. the Source attribute in Main.xaml goes
-            // from SuccessStoryMainView.xaml to PlayniteAchievementsMainView.xaml) but the actual
-            // files on disk keep their original names.  Without the copies those rewritten Source
-            // references resolve to empty URIs at load time and crash the theme.
+            // Rewritten XAML references need matching PlayniteAchievements-named files.
             CreateRenamedFileCopies(themePath, backupPath);
 
-            // Only create backup folder and manifest if we actually backed up files
             if (!hasExistingBackup && backedUpFiles.Count > 0)
             {
                 WriteManifest(backupPath, backedUpFiles, mode, customSelection);
@@ -335,10 +339,8 @@ namespace PlayniteAchievements.Services.ThemeMigration
         }
 
         /// <summary>
-        /// After content migration, creates PlayniteAchievements-named copies of any
-        /// SuccessStory-named or SSHelper-named XAML files so that file references rewritten
-        /// by the migration (e.g. SuccessStoryMainView.xaml → PlayniteAchievementsMainView.xaml)
-        /// resolve correctly when Playnite loads the theme.
+        /// Creates PlayniteAchievements-named copies of SuccessStory/SSHelper XAML files so
+        /// rewritten Source references resolve after migration.
         /// </summary>
         private void CreateRenamedFileCopies(string themePath, string backupPath)
         {
@@ -346,15 +348,17 @@ namespace PlayniteAchievements.Services.ThemeMigration
             foreach (var file in themeDir.GetFiles("*.xaml", SearchOption.AllDirectories))
             {
                 if (file.FullName.StartsWith(backupPath, StringComparison.OrdinalIgnoreCase))
+                {
                     continue;
+                }
 
-                string newName = file.Name;
-                newName = newName.Replace("SuccessStory", ThemeSourceName);
-                newName = newName.Replace("SSHelper", ThemeSourceName);
-
-                // Only proceed if the name actually changed
+                var newName = file.Name
+                    .Replace("SuccessStory", ThemeSourceName)
+                    .Replace("SSHelper", ThemeSourceName);
                 if (string.Equals(newName, file.Name, StringComparison.OrdinalIgnoreCase))
+                {
                     continue;
+                }
 
                 var newPath = Path.Combine(file.DirectoryName, newName);
                 if (!File.Exists(newPath))
@@ -395,9 +399,18 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 int successStoryCount = CountOccurrences(content, "SuccessStory");
                 int iconCount = CountOccurrences(content, "\uE820");  // SuccessStory trophy icon (U+E820)
                 int iconEntityCount = CountOccurrences(content, "&#xE820;");
-                int originalForkPluginStatusCount = Regex.Matches(content, PluginStatusOriginalForkPattern, RegexOptions.IgnoreCase).Count;
-                int forkIdInPluginSettingsCount = Regex.Matches(content, PluginSettingsForkIdPattern, RegexOptions.IgnoreCase).Count;
-                int duplicatedForkIdCount = CountOccurrences(content, "PlayniteAchievementsSantodanSantodan");
+                int originalForkPluginStatusCount = Regex.Matches(
+                    content,
+                    PluginStatusOriginalForkPattern,
+                    RegexOptions.IgnoreCase).Count;
+                int forkIdInPluginSettingsCount = Regex.Matches(
+                    content,
+                    PluginSettingsForkIdPattern,
+                    RegexOptions.IgnoreCase).Count;
+                int duplicatedForkIdCount = CountOccurrences(
+                    content,
+                    "PlayniteAchievementsSantodanSantodan");
+                int localProviderCompatibilityCount = NeedsLocalProviderCompatibility(content) ? 1 : 0;
 
                 int totalCount = fullscreenHelperCount
                     + pluginIdCount
@@ -407,13 +420,21 @@ namespace PlayniteAchievements.Services.ThemeMigration
                     + iconEntityCount
                     + originalForkPluginStatusCount
                     + forkIdInPluginSettingsCount
-                    + duplicatedForkIdCount;
+                    + duplicatedForkIdCount
+                    + localProviderCompatibilityCount;
 
                 foreach (var mapping in GetSelectedControlMappings(mode, customSelection))
                 {
                     totalCount += CountStandaloneControlNameOccurrences(content, mapping.Key);
                     totalCount += CountOccurrences(content, $"SuccessStory_{mapping.Key}");
                     totalCount += CountOccurrences(content, $"PlayniteAchievements_{mapping.Key}");
+                }
+
+                if (ShouldConfigureUnlockedListHighlight(mode, customSelection))
+                {
+                    var sourceVariant = GetOppositeUnlockedListControlName(customSelection);
+                    totalCount += CountStandaloneControlNameOccurrences(content, sourceVariant);
+                    totalCount += CountOccurrences(content, $"PlayniteAchievements_{sourceVariant}");
                 }
 
                 if (ShouldModernizeBindings(mode, customSelection))
@@ -614,7 +635,45 @@ namespace PlayniteAchievements.Services.ThemeMigration
         /// </summary>
         private string ProcessStandardFile(string content, string originalContent, ref int replacements)
         {
-            return ApplyReplacements(content, originalContent, ref replacements);
+            // Theme-owned names are identifiers, not plugin aliases. Renaming them can
+            // merge distinct panels (e.g. Solaris's SuccessStory and PlayniteAchievements).
+            // Keep references to those names intact as well. Registered custom controls
+            // still need their source prefix migrated so Playnite can instantiate them.
+            var names = Regex.Matches(content,
+                @"(?<![\w:])(?:x:Name|Name|(?:Storyboard\.)?TargetName|ElementName)\s*=\s*(?:""(?<name>[^""]*)""|'(?<name>[^']*)'|(?<name>[\w]+))");
+            var protectedNames = new Dictionary<string, string>();
+            var marker = "__ThemeName_" + Guid.NewGuid().ToString("N") + "_";
+            var result = new StringBuilder();
+            int position = 0;
+            foreach (Match match in names)
+            {
+                var name = match.Groups["name"];
+                if (!name.Value.Contains("SuccessStory") && !name.Value.Contains("SSHelper"))
+                {
+                    continue;
+                }
+                if (name.Value.StartsWith("SuccessStory_", StringComparison.Ordinal) ||
+                    name.Value.StartsWith("SSHelper_", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var segment = content.Substring(position, name.Index - position);
+                result.Append(segment);
+                var placeholder = marker + protectedNames.Count + "__";
+                protectedNames.Add(placeholder, name.Value);
+                result.Append(placeholder);
+                position = name.Index + name.Length;
+            }
+
+            var remainder = content.Substring(position);
+            result.Append(remainder);
+            var migrated = ApplyReplacements(result.ToString(), originalContent, ref replacements);
+            foreach (var entry in protectedNames)
+            {
+                migrated = migrated.Replace(entry.Key, entry.Value);
+            }
+            return migrated;
         }
 
         /// <summary>
@@ -640,12 +699,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
             result = result.Replace("SuccessStory", ThemeSourceName);
             replacements += CountOccurrences(originalContent, "SuccessStory");
 
-            // Fix PluginStatus install-check bindings: PluginStatus uses the extension ID, not the SourceName.
-            // Themes designed for the original PlayniteAchievements fork write
-            //   "PluginStatus Plugin=PlayniteAchievements" or "PluginStatus Plugin=""PlayniteAchievements"""
-            // which resolves to nothing in this fork (extension ID is PlayniteAchievementsSantodan).
-            // Must come after all SuccessStory→PlayniteAchievements replacements above.
-            // Handles both quoted and unquoted forms: Plugin=PlayniteAchievements and Plugin="PlayniteAchievements"
+            // PluginStatus resolves extension IDs, while PluginSettings uses the source alias.
             result = Regex.Replace(
                 result,
                 @"(?<=PluginStatus\s+(?:Plugin|Id)\s*=\s*['""]?)PlayniteAchievements(?!Santodan)",
@@ -656,8 +710,6 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 @"(?<=PluginStatus\s+(?:Plugin|Id)\s*=\s*['""]?)PlayniteAchievements(?!Santodan)",
                 RegexOptions.IgnoreCase).Count;
 
-            // Normalize PluginSettings source bindings to the stable source alias.
-            // Theme source names should remain PlayniteAchievements; PluginStatus uses extension IDs.
             result = Regex.Replace(
                 result,
                 @"(?<=PluginSettings\s+Plugin\s*=\s*['""]?)PlayniteAchievementsSantodan",
@@ -668,30 +720,38 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 @"(?<=PluginSettings\s+Plugin\s*=\s*['""]?)PlayniteAchievementsSantodan",
                 RegexOptions.IgnoreCase).Count;
 
-            // Auto-repair older bad migrations that produced duplicated extension IDs.
-            result = result.Replace("PlayniteAchievementsSantodanSantodan", PluginExtensionId);
-            replacements += CountOccurrences(originalContent, "PlayniteAchievementsSantodanSantodan");
+            result = result.Replace(
+                "PlayniteAchievementsSantodanSantodan",
+                PluginExtensionId);
+            replacements += CountOccurrences(
+                originalContent,
+                "PlayniteAchievementsSantodanSantodan");
 
             // Fix style key names to match plugin expectations
-            // Plugin looks for "GameAchievementsWindow" but themes have "GameAchievementsWindowStyle".
-            // Skip each rename if a style with the target key already exists in the file — renaming
-            // would produce a duplicate x:Key which causes a fatal XAML parse error on load.
-            // Themes like Aniki ReMake already ship both keys (one for PA, one for SS fall-back).
-            bool hasNativeGameAchievementsWindow = Regex.IsMatch(originalContent, @"[""']GameAchievementsWindow[""']");
+            // Avoid generating duplicate resource keys when the native target already exists.
+            bool hasNativeGameAchievementsWindow =
+                Regex.IsMatch(originalContent, @"[""']GameAchievementsWindow[""']");
             if (!hasNativeGameAchievementsWindow)
             {
-                result = result.Replace("GameAchievementsWindowStyle", "GameAchievementsWindow");
-                replacements += CountOccurrences(originalContent, "GameAchievementsWindowStyle");
+                result = result.Replace(
+                    "GameAchievementsWindowStyle",
+                    "GameAchievementsWindow");
+                replacements += CountOccurrences(
+                    originalContent,
+                    "GameAchievementsWindowStyle");
             }
 
-            // NOTE: "AchievementsWindowStyle" is a substring of "GameAchievementsWindowStyle".
-            // Use a negative lookbehind to avoid renaming GameAchievementsWindowStyle here —
-            // that key is handled (or deliberately skipped) by the guard above.
-            bool hasNativeAchievementsWindow = Regex.IsMatch(originalContent, @"[""']AchievementsWindow[""']");
+            bool hasNativeAchievementsWindow =
+                Regex.IsMatch(originalContent, @"[""']AchievementsWindow[""']");
             if (!hasNativeAchievementsWindow)
             {
-                result = Regex.Replace(result, @"(?<![a-zA-Z])AchievementsWindowStyle", "AchievementsWindow");
-                replacements += Regex.Matches(originalContent, @"(?<![a-zA-Z])AchievementsWindowStyle").Count;
+                result = Regex.Replace(
+                    result,
+                    @"(?<![a-zA-Z])AchievementsWindowStyle",
+                    "AchievementsWindow");
+                replacements += Regex.Matches(
+                    originalContent,
+                    @"(?<![a-zA-Z])AchievementsWindowStyle").Count;
             }
 
             // Convert DataContext bindings to use PluginSettings with our exposed properties
@@ -722,9 +782,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
             result = result.Replace("&#xE820;", "&#xEDD7;");
             replacements += CountOccurrences(originalContent, "&#xE820;");
 
-            // Legacy themes sometimes bind raw double Percent values with StringFormat={}{0}%.
-            // RetroAchievements can provide very small precise values (e.g. 0.0132026...),
-            // which renders an unreadable number of decimals. Normalize to two decimals.
+            // Keep rarity percentages readable when legacy themes bind raw double values.
             result = Regex.Replace(
                 result,
                 @"StringFormat\s*=\s*\{\}\{0\}%",
@@ -735,7 +793,144 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 @"StringFormat\s*=\s*\{\}\{0\}%",
                 RegexOptions.IgnoreCase).Count;
 
+            result = ApplyLocalProviderCompatibility(result, ref replacements);
+
             return result;
+        }
+
+        private static bool NeedsLocalProviderCompatibility(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                return false;
+            }
+
+            var missingDynamicProvider =
+                content.Contains("FilterDynamicGameSummariesByProviderCommand") &&
+                content.Contains("CommandParameter=\"Hoyoverse\"") &&
+                !content.Contains("CommandParameter=\"Local\"");
+            var missingPresetOption =
+                content.Contains("Tag=\"HoyoverseGames\"") &&
+                !content.Contains("Tag=\"LocalGames\"");
+            var missingPresetList =
+                content.Contains("x:Name=\"HoyoverseGames\"") &&
+                !content.Contains("x:Name=\"LocalGames\"");
+            var missingPresetTrigger =
+                content.Contains("Value=\"HoyoverseGames\"") &&
+                content.Contains("TargetName=\"HoyoverseGames\"") &&
+                !(content.Contains("Value=\"LocalGames\"") &&
+                  content.Contains("TargetName=\"LocalGames\""));
+
+            return missingDynamicProvider ||
+                   missingPresetOption ||
+                   missingPresetList ||
+                   missingPresetTrigger;
+        }
+
+        private static string ApplyLocalProviderCompatibility(string content, ref int replacements)
+        {
+            if (!NeedsLocalProviderCompatibility(content))
+            {
+                return content;
+            }
+
+            var result = content;
+            var newline = result.Contains("\r\n") ? "\r\n" : "\n";
+
+            if (!result.Contains("CommandParameter=\"Local\""))
+            {
+                result = DuplicateMatchingBlock(
+                    result,
+                    @"(?m)^(?:[ \t]*<!-- Hoyoverse -->\r?\n)?[ \t]*<ButtonEx Content=""Hoyoverse""[\s\S]*?^[ \t]*</ButtonEx>",
+                    block => block
+                        .Replace("<!-- Hoyoverse -->", "<!-- Local -->")
+                        .Replace("Content=\"Hoyoverse\"", "Content=\"Local\"")
+                        .Replace("CommandParameter=\"Hoyoverse\"", "CommandParameter=\"Local\""),
+                    newline,
+                    ref replacements);
+            }
+
+            if (!result.Contains("Tag=\"LocalGames\""))
+            {
+                result = DuplicateMatchingBlock(
+                    result,
+                    @"(?m)^[ \t]*<ComboBoxItem Content=""Hoyoverse"" Tag=""HoyoverseGames""[^\r\n]*/>",
+                    block => block
+                        .Replace("Content=\"Hoyoverse\"", "Content=\"Local\"")
+                        .Replace("Tag=\"HoyoverseGames\"", "Tag=\"LocalGames\""),
+                    newline,
+                    ref replacements);
+            }
+
+            if (!result.Contains("x:Name=\"LocalGames\""))
+            {
+                result = DuplicateMatchingBlock(
+                    result,
+                    @"(?m)^[ \t]*<!-- List//HoyoverseGames -->\r?\n[ \t]*<ListView x:Name=""HoyoverseGames""[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*?/>",
+                    block => block
+                        .Replace("List//HoyoverseGames", "List//LocalGames")
+                        .Replace("x:Name=\"HoyoverseGames\"", "x:Name=\"LocalGames\"")
+                        .Replace("Path=HoyoverseGames", "Path=LocalGames"),
+                    newline,
+                    ref replacements);
+            }
+
+            if (!result.Contains("TargetName=\"LocalGames\""))
+            {
+                result = DuplicateMatchingBlock(
+                    result,
+                    @"(?m)^[ \t]*<Setter Property=""Visibility"" Value=""Collapsed"" TargetName=""HoyoverseGames"" />",
+                    block => block.Replace("TargetName=\"HoyoverseGames\"", "TargetName=\"LocalGames\""),
+                    newline,
+                    ref replacements);
+            }
+
+            if (!result.Contains("Value=\"LocalGames\""))
+            {
+                var triggerPattern =
+                    @"(?ms)^(?<indent>[ \t]*)<MultiDataTrigger>\r?\n.*?^\k<indent></MultiDataTrigger>";
+                var hoyoverseTrigger = Regex.Matches(result, triggerPattern)
+                    .Cast<Match>()
+                    .FirstOrDefault(match =>
+                        match.Value.Contains("Value=\"HoyoverseGames\"") &&
+                        match.Value.Contains("TargetName=\"HoyoverseGames\""));
+                if (hoyoverseTrigger != null)
+                {
+                    var localTrigger = hoyoverseTrigger.Value
+                        .Replace("Value=\"HoyoverseGames\"", "Value=\"LocalGames\"")
+                        .Replace("Value=\"Hoyoverse\"", "Value=\"Local\"")
+                        .Replace("TargetName=\"HoyoverseGames\"", "TargetName=\"LocalGames\"");
+                    result = result.Insert(
+                        hoyoverseTrigger.Index + hoyoverseTrigger.Length,
+                        newline + localTrigger);
+                    replacements++;
+                }
+            }
+
+            return result;
+        }
+
+        private static string DuplicateMatchingBlock(
+            string content,
+            string pattern,
+            Func<string, string> transform,
+            string newline,
+            ref int replacements)
+        {
+            var match = Regex.Match(content, pattern);
+            if (!match.Success)
+            {
+                return content;
+            }
+
+            var duplicate = transform(match.Value);
+            if (string.Equals(match.Value, duplicate, StringComparison.Ordinal))
+            {
+                return content;
+            }
+
+            replacements++;
+            return content.Insert(match.Index + match.Length, newline + duplicate);
         }
 
         /// <summary>
@@ -757,6 +952,21 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 controlReplacements += ReplacePrefixedControlName(ref result, "PlayniteAchievements", mapping.Key, mapping.Value);
                 controlReplacements += ReplacePrefixedControlName(ref result, "SuccessStory", mapping.Key, mapping.Value);
                 controlReplacements += ReplaceStandaloneControlName(ref result, mapping.Key, mapping.Value);
+            }
+
+            if (ShouldConfigureUnlockedListHighlight(mode, customSelection))
+            {
+                var sourceVariant = GetOppositeUnlockedListControlName(customSelection);
+                var targetVariant = GetSelectedUnlockedListControlName(customSelection);
+                controlReplacements += ReplacePrefixedControlName(
+                    ref result,
+                    "PlayniteAchievements",
+                    sourceVariant,
+                    targetVariant);
+                controlReplacements += ReplaceStandaloneControlName(
+                    ref result,
+                    sourceVariant,
+                    targetVariant);
             }
 
             // Replace LegacyData binding paths with Theme binding paths
@@ -804,7 +1014,9 @@ namespace PlayniteAchievements.Services.ThemeMigration
                         !ControlMappings.CompactAchievementListControlNames.Contains(mapping.Key));
                 }
 
-                return mappings;
+                return mappings.Select(mapping => ResolveSelectedControlMapping(
+                    mapping,
+                    customSelection));
             }
 
             if (mode != MigrationMode.Custom || customSelection == null)
@@ -813,7 +1025,54 @@ namespace PlayniteAchievements.Services.ThemeMigration
             }
 
             return ControlMappings.LegacyToModernControlNames
-                .Where(mapping => customSelection.ShouldModernizeControl(mapping.Key));
+                .Where(mapping => customSelection.ShouldModernizeControl(mapping.Key))
+                .Select(mapping => ResolveSelectedControlMapping(mapping, customSelection));
+        }
+
+        private static KeyValuePair<string, string> ResolveSelectedControlMapping(
+            KeyValuePair<string, string> mapping,
+            CustomMigrationSelection customSelection)
+        {
+            if (!string.Equals(
+                    mapping.Key,
+                    "PluginCompactUnlocked",
+                    StringComparison.Ordinal))
+            {
+                return mapping;
+            }
+
+            return new KeyValuePair<string, string>(
+                mapping.Key,
+                GetSelectedUnlockedListControlName(customSelection));
+        }
+
+        private static bool ShouldConfigureUnlockedListHighlight(
+            MigrationMode mode,
+            CustomMigrationSelection customSelection)
+        {
+            if (mode == MigrationMode.Full)
+            {
+                return customSelection?.ModernizeCompactAchievementLists != false;
+            }
+
+            return mode == MigrationMode.Custom &&
+                   customSelection?.ShouldModernizeControl("PluginCompactUnlocked") == true;
+        }
+
+        private static string GetSelectedUnlockedListControlName(
+            CustomMigrationSelection customSelection)
+        {
+            return customSelection?.HighlightLatestUnlockedAchievement == false
+                ? ControlMappings.ScrollOnlyUnlockedListControlName
+                : ControlMappings.HighlightedUnlockedListControlName;
+        }
+
+        private static string GetOppositeUnlockedListControlName(
+            CustomMigrationSelection customSelection)
+        {
+            return customSelection?.HighlightLatestUnlockedAchievement == false
+                ? ControlMappings.HighlightedUnlockedListControlName
+                : ControlMappings.ScrollOnlyUnlockedListControlName;
         }
 
         private static int ReplacePrefixedControlName(ref string content, string prefix, string legacyName, string modernName)

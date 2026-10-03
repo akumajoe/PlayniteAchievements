@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.Serialization;
+using PlayniteAchievements.Models.Settings;
 using Playnite.SDK.Models;
 
 namespace PlayniteAchievements.Models.Achievements
@@ -61,11 +62,26 @@ namespace PlayniteAchievements.Models.Achievements
         public bool IsAppIdOverridden { get; set; }
 
         /// <summary>
+        /// Runtime-only signal that the incoming achievement list is intentionally complete even
+        /// when it is smaller than the cached schema. Used for explicit per-game set filtering.
+        /// </summary>
+        [IgnoreDataMember]
+        public bool IsAchievementSchemaAuthoritative { get; set; }
+
+        /// <summary>
         /// Computed completion status based on all achievements unlocked or capstone.
         /// </summary>
         public bool IsCompleted =>
-            (AchievementCount > 0 && UnlockedCount >= AchievementCount) ||
+            (Achievements?.Count > 0 && Achievements.All(a => a?.Unlocked == true)) ||
             IsCapstoneUnlocked();
+
+        /// <summary>
+        /// True only when every achievement is unlocked — IsCompleted without the capstone
+        /// shortcut. Drives the standalone 100%-completion notification, which is reserved
+        /// for true 100% while a capstone unlock still marks the game IsCompleted.
+        /// </summary>
+        public bool IsFullyUnlocked =>
+            Achievements?.Count > 0 && Achievements.All(a => a?.Unlocked == true);
 
         private bool IsCapstoneUnlocked()
         {
@@ -77,6 +93,8 @@ namespace PlayniteAchievements.Models.Achievements
         public string GameName { get; set; }
 
         public int AppId { get; set; }
+
+        public string ProviderGameKey { get; set; }
 
         public Guid? PlayniteGameId { get; set; }
 
@@ -102,6 +120,21 @@ namespace PlayniteAchievements.Models.Achievements
         public List<string> AchievementOrder { get; set; }
 
         /// <summary>
+        /// Runtime-only goal achievement list, most-wanted first. Not persisted in cache/database.
+        /// </summary>
+        [IgnoreDataMember]
+        public List<string> GoalAchievements { get; set; }
+
+        [IgnoreDataMember]
+        public List<string> AchievementCategoryOrder { get; set; }
+
+        [IgnoreDataMember]
+        public Dictionary<string, CategoryImageOverrideData> AchievementCategoryImageOverrides { get; set; }
+
+        [IgnoreDataMember]
+        public GameSummaryCategoryData GameSummaryCategory { get; set; }
+
+        /// <summary>
         /// Runtime-only exclusion flag for summary surfaces such as the overview/theme views.
         /// Not persisted in cache/database.
         /// </summary>
@@ -118,50 +151,15 @@ namespace PlayniteAchievements.Models.Achievements
         public List<AchievementDetail> Achievements { get; set; } = new List<AchievementDetail>();
 
         /// <summary>
-        /// Aggregate achievement total when the provider only knows summary counts.
-        /// Falls back to the detailed list count when present.
-        /// </summary>
-        public int? AggregateAchievementCount { get; set; }
-
-        /// <summary>
-        /// Aggregate unlocked count when the provider only knows summary counts.
-        /// Falls back to the detailed list count when present.
-        /// </summary>
-        public int? AggregateUnlockedCount { get; set; }
-
-        /// <summary>
         /// Total count of achievements. Computed property for performance.
         /// </summary>
         [IgnoreDataMember]
-        public int AchievementCount
-        {
-            get
-            {
-                if (Achievements?.Count > 0)
-                {
-                    return Achievements.Count;
-                }
-
-                return Math.Max(0, AggregateAchievementCount ?? 0);
-            }
-        }
+        public int AchievementCount => Achievements?.Count ?? 0;
 
         /// <summary>
         /// Count of unlocked achievements. Computed property for performance.
         /// </summary>
         [IgnoreDataMember]
-        public int UnlockedCount
-        {
-            get
-            {
-                if (Achievements?.Count > 0)
-                {
-                    return Achievements.Count(a => a.Unlocked);
-                }
-
-                var aggregateUnlocked = Math.Max(0, AggregateUnlockedCount ?? 0);
-                return Math.Min(aggregateUnlocked, AchievementCount);
-            }
-        }
+        public int UnlockedCount => Achievements?.Count(a => a.Unlocked) ?? 0;
     }
 }

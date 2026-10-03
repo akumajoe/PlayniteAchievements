@@ -104,15 +104,7 @@ namespace PlayniteAchievements.Providers.Steam
 
         public void ClearInMemoryAuthState()
         {
-            lock (_cookieLock)
-            {
-                _cookieJar = new CookieContainer();
-            }
-
-            lock (_cookieSyncStateLock)
-            {
-                _lastCefCookieSyncUtc = DateTime.MinValue;
-            }
+            ResetAuthenticatedHttpClientState();
         }
 
         // ---------------------------------------------------------------------
@@ -137,6 +129,13 @@ namespace PlayniteAchievements.Providers.Steam
 
             _logger?.Debug($"[SteamAch] Probing Steam session (Force={forceRefresh})...");
             var result = await _sessionManager.ProbeAuthStateAsync(ct).ConfigureAwait(false);
+            if (forceRefresh)
+            {
+                // A forced refresh must start from a clean container. Adding refreshed
+                // cookies to the existing jar can leave stale domain/path variants active.
+                ResetAuthenticatedHttpClientState();
+            }
+
             SyncCookieJarFromCefIfNeeded(force: true);
             lock (_cookieLock)
             {
@@ -178,7 +177,7 @@ namespace PlayniteAchievements.Providers.Steam
             {
                 lock (_cookieLock)
                 {
-                    SteamSessionManager.LoadCefCookiesIntoJar(_api, _logger, _cookieJar);
+                    _sessionManager.LoadCefCookiesIntoJar(_cookieJar);
                 }
             }
         }
@@ -218,7 +217,7 @@ namespace PlayniteAchievements.Providers.Steam
             {
                 return await SteamAsyncConfigTokenHelper.ResolveTokenAsync(
                     RequestStoreAsyncConfigAsync,
-                    _sessionManager.WarmStoreSessionAsync,
+                    WarmStoreSessionAsync,
                     () => SyncCookieJarFromCefIfNeeded(force: true),
                     _logger,
                     ct).ConfigureAwait(false);
@@ -229,6 +228,14 @@ namespace PlayniteAchievements.Providers.Steam
                 _logger?.Debug(ex, "[SteamAch] Store token request failed.");
                 return null;
             }
+        }
+
+        private async Task<bool> WarmStoreSessionAsync(CancellationToken ct)
+        {
+            var result = await _sessionManager.GetSteamPageAsyncCef(
+                "https://store.steampowered.com/",
+                ct).ConfigureAwait(false);
+            return !string.IsNullOrWhiteSpace(result.Html);
         }
 
         private async Task<SteamAsyncConfigRequestResult> RequestStoreAsyncConfigAsync(CancellationToken ct)
@@ -444,6 +451,27 @@ namespace PlayniteAchievements.Providers.Steam
 
         public Task<SteamPageResult> GetAchievementsPageAsync(string steamId64, int appId, string language, CancellationToken ct)
             => GetSteamPageAsync($"https://steamcommunity.com/profiles/{steamId64}/stats/{appId}/?tab=achievements&l={language ?? "english"}", true, ct);
+
+        public Task<SteamPageResult> GetFriendsPageAsync(string steamId64, CancellationToken ct)
+        {
+            return string.IsNullOrWhiteSpace(steamId64)
+                ? Task.FromResult(new SteamPageResult())
+                : GetSteamPageAsync($"https://steamcommunity.com/profiles/{steamId64.Trim()}/friends?ajax=1", true, ct);
+        }
+
+        public Task<SteamPageResult> GetOwnedGamesPageAsync(string steamId64, CancellationToken ct)
+        {
+            return string.IsNullOrWhiteSpace(steamId64)
+                ? Task.FromResult(new SteamPageResult())
+                : GetSteamPageAsync($"https://steamcommunity.com/profiles/{steamId64.Trim()}/games?tab=all", true, ct);
+        }
+
+        public Task<SteamPageResult> GetProfileXmlPageAsync(string steamId64, CancellationToken ct)
+        {
+            return string.IsNullOrWhiteSpace(steamId64)
+                ? Task.FromResult(new SteamPageResult())
+                : GetSteamPageAsync($"https://steamcommunity.com/profiles/{steamId64.Trim()}/?xml=1", true, ct);
+        }
 
         public Task<SteamPageResult> GetAchievementsPageByKeyAsync(string steamId64, string statsKey, string language, CancellationToken ct)
         {
@@ -884,8 +912,16 @@ namespace PlayniteAchievements.Providers.Steam
                         var match = Regex.Match(text, @"^(\d+)\s*/\s*(\d+)$");
                         if (match.Success)
                         {
-                            progressNum = int.Parse(match.Groups[1].Value);
-                            progressDenom = int.Parse(match.Groups[2].Value);
+                            var parsedNum = int.Parse(match.Groups[1].Value);
+                            var parsedDenom = int.Parse(match.Groups[2].Value);
+
+                            // A single-step bar (0/1 or 1/1) restates the locked/unlocked state, so
+                            // it is not recorded as per-achievement progress.
+                            if (parsedDenom > 1)
+                            {
+                                progressNum = parsedNum;
+                                progressDenom = parsedDenom;
+                            }
                         }
                     }
                 }
@@ -1168,9 +1204,10 @@ namespace PlayniteAchievements.Providers.Steam
                             var responseHtml = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
 
                             if (requiresCookies && isSteamAuth && attempt == 1 &&
-                                LooksUnauthenticatedStatsPayload(responseHtml, result.FinalUrl))
+                                (LooksUnauthenticatedStatsPayload(responseHtml, result.FinalUrl) ||
+                                 LooksLoggedOutStatsPayloadWithoutRows(responseHtml, result.FinalUrl)))
                             {
-                                _logger?.Warn($"[SteamAch] Auth-like stats payload detected for {url} (Status={resp.StatusCode}, Url={result.FinalUrl}). Forcing session refresh and retrying once.");
+                                _logger?.Warn($"[SteamAch] Logged-out stats payload detected for {url} (Status={resp.StatusCode}, Url={result.FinalUrl}). Rebuilding the authenticated client, refreshing the session, and retrying once.");
                                 await EnsureSessionAsync(ct, forceRefresh: true).ConfigureAwait(false);
                                 continue;
                             }
@@ -1192,8 +1229,23 @@ namespace PlayniteAchievements.Providers.Steam
 
         private void BuildHttpClientsOnce()
         {
-            _handler?.Dispose(); _http?.Dispose();
+            RebuildAuthenticatedHttpClient();
+
             _apiHandler?.Dispose(); _apiHttp?.Dispose();
+
+            _apiHandler = new HttpClientHandler
+            {
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+                AllowAutoRedirect = true,
+                UseCookies = false
+            };
+            _apiHttp = new HttpClient(_apiHandler) { Timeout = TimeSpan.FromSeconds(30) };
+        }
+
+        private void RebuildAuthenticatedHttpClient()
+        {
+            _http?.Dispose();
+            _handler?.Dispose();
 
             _cookieJar.PerDomainCapacity = 300;
 
@@ -1205,14 +1257,20 @@ namespace PlayniteAchievements.Providers.Steam
                 UseCookies = true
             };
             _http = new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(30) };
+        }
 
-            _apiHandler = new HttpClientHandler
+        private void ResetAuthenticatedHttpClientState()
+        {
+            lock (_cookieLock)
             {
-                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
-                AllowAutoRedirect = true,
-                UseCookies = false
-            };
-            _apiHttp = new HttpClient(_apiHandler) { Timeout = TimeSpan.FromSeconds(30) };
+                _cookieJar = new CookieContainer();
+                RebuildAuthenticatedHttpClient();
+            }
+
+            lock (_cookieSyncStateLock)
+            {
+                _lastCefCookieSyncUtc = DateTime.MinValue;
+            }
         }
 
         // ---------------------------------------------------------------------
@@ -1244,6 +1302,23 @@ namespace PlayniteAchievements.Providers.Steam
             return SteamStatsPageClassifier.LooksLoggedOutHeader(html);
         }
 
+        public static bool LooksLoggedOutStatsPayloadWithoutRows(string html, string finalUrl = null)
+        {
+            return SteamStatsPageClassifier.LooksLoggedOutStatsPayloadWithoutRows(html, finalUrl);
+        }
+
+        public static bool LooksUnauthenticatedSteamPage(string html, string finalUrl = null)
+        {
+            return (!string.IsNullOrWhiteSpace(finalUrl) &&
+                    (finalUrl.IndexOf("/login", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     finalUrl.IndexOf("openid", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     finalUrl.IndexOf("login.steampowered.com", StringComparison.OrdinalIgnoreCase) >= 0)) ||
+                   LooksLoggedOutHeader(html) ||
+                   LooksUnauthenticatedStatsPayload(html, finalUrl) ||
+                   (!string.IsNullOrWhiteSpace(html) &&
+                    html.IndexOf("<title>Sign In</title>", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
         public static bool HasAnyAchievementRows(string html)
         {
             if (string.IsNullOrWhiteSpace(html)) return false;
@@ -1254,36 +1329,7 @@ namespace PlayniteAchievements.Providers.Steam
 
         public static bool HasOnlyHiddenAchievementRows(string html)
         {
-            if (string.IsNullOrWhiteSpace(html))
-            {
-                return false;
-            }
-
-            var doc = new HtmlDocument();
-            doc.LoadHtml(html);
-
-            var nodes = doc.DocumentNode.SelectNodes("//div[contains(@class,'achieveRow')]") ??
-                        doc.DocumentNode.SelectNodes("//div[contains(@class,'achieveTxtHolder')]") ??
-                        doc.DocumentNode.SelectNodes("//*[contains(@class,'achievement') and (.//h3 or .//div[contains(@class,'achieveUnlockTime')])]");
-
-            if (nodes == null || nodes.Count == 0)
-            {
-                return false;
-            }
-
-            var hasHiddenRow = false;
-            foreach (var row in nodes)
-            {
-                var isHidden = row.SelectSingleNode(".//div[contains(@class,'achieveHiddenBox')]") != null;
-                if (!isHidden)
-                {
-                    return false;
-                }
-
-                hasHiddenRow = true;
-            }
-
-            return hasHiddenRow;
+            return SteamStatsPageClassifier.HasOnlyHiddenAchievementRows(html);
         }
 
         public void ResetSteamDatetimeParseFailuresForScan()

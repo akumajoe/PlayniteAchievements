@@ -1,6 +1,9 @@
 using Playnite.SDK;
 using Playnite.SDK.Models;
 using PlayniteAchievements.Models;
+using PlayniteAchievements.Services.Achievements;
+using PlayniteAchievements.Services.GameCustomData;
+using PlayniteAchievements.ViewModels.Items;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -12,11 +15,26 @@ namespace PlayniteAchievements
     {
         public static PlayniteAchievementsPlugin Instance { get; set; }
 
+        public static event EventHandler SettingsSaved;
+
+        public static void NotifySettingsSaved() => SettingsSaved?.Invoke(null, EventArgs.Empty);
+
         public PlayniteAchievementsSettings Settings { get; set; }
 
-        public Services.AchievementDataService AchievementDataService { get; set; }
+        public Services.Achievements.AchievementDataService AchievementDataService { get; set; }
 
-        public Services.GameCustomDataStore GameCustomDataStore { get; set; }
+        // Mirrors the real plugin property RefreshRuntime reads for the category path repoint.
+        public Services.Achievements.AchievementOverridesService AchievementOverridesService { get; set; }
+
+        public Services.GameCustomData.GameCustomDataStore GameCustomDataStore { get; set; }
+
+        public Services.Images.DiskImageService DiskImageService { get; set; }
+
+        // Mirrors the real plugin property ToastImageResolver reads when decoding notification
+        // artwork. Left null in tests, which is the "no image service yet" path.
+        public Services.Images.MemoryImageService ImageService { get; set; }
+
+        public Services.ThemeIntegration.ThemeIntegrationService ThemeIntegrationService { get; set; }
 
         public IPlayniteAPI PlayniteApi { get; set; }
 
@@ -25,9 +43,29 @@ namespace PlayniteAchievements
             Settings = settings;
         }
 
-        public void SaveSettingsSafely(PlayniteAchievementsSettings settings)
+        public void RequestThemeUpdate(Game gameContext)
         {
-            Settings = settings;
+        }
+
+        public void OpenViewAchievementsWindow(Guid gameId, string focusAchievementId = null)
+        {
+        }
+    }
+}
+
+namespace PlayniteAchievements.Services.Achievements
+{
+    // Mirrors the members RefreshRuntime touches on the real overrides service, so the linked
+    // category-path repoint compiles against the plugin stub.
+    public class AchievementOverridesService
+    {
+        public void SetAchievementCategoryMetadata(
+            System.Guid gameId,
+            System.Collections.Generic.IReadOnlyList<string> categoryOrder,
+            System.Collections.Generic.IReadOnlyDictionary<string, Models.Settings.CategoryImageOverrideData> categoryImageOverrides,
+            Models.Settings.GameSummaryCategoryData gameSummaryCategory,
+            bool affectsSummaryData = true)
+        {
         }
     }
 }
@@ -76,15 +114,15 @@ namespace PlayniteAchievements.Models.Achievements
 
         public string LockedIconPath { get; set; }
 
-        public bool HasSourceUnlockedIcon { get; set; }
-
-        public bool HasSourceLockedIcon { get; set; }
-
         public bool Hidden { get; set; }
 
         public bool Unlocked { get; set; }
 
         public bool IsCapstone { get; set; }
+
+        public bool IsGoal { get; set; }
+
+        public int GoalOrderIndex { get; set; } = int.MaxValue;
 
         public bool IsFiltered { get; set; }
 
@@ -110,11 +148,41 @@ namespace PlayniteAchievements.Models.Achievements
 
         public string Category { get; set; }
 
-        public int DisplayOrder { get; set; }
+        public string ProviderCategory { get; set; }
 
         public string ProviderKey { get; set; }
 
         public Game Game { get; set; }
+
+        public string CategoryArtPath { get; set; }
+
+        public int CategoryOrderIndex { get; set; } = int.MaxValue;
+
+        public int DefaultOrderIndex { get; set; } = int.MaxValue;
+
+        public string CleanCapturePath { get; set; }
+
+        public string NotificationCapturePath { get; set; }
+
+        public string FramedCapturePath { get; set; }
+
+        public string VideoCapturePath { get; set; }
+
+        public bool HasAnyCapture =>
+            CleanCapturePath != null || NotificationCapturePath != null ||
+            FramedCapturePath != null || VideoCapturePath != null;
+
+        public System.Windows.Input.ICommand SetDynamicAchievementsGameCommand { get; set; }
+
+        public System.Windows.Input.ICommand FilterDynamicLibraryAchievementsByProviderCommand { get; set; }
+
+        public System.Windows.Input.ICommand OpenViewAchievementsWindow { get; set; }
+
+        public System.Windows.Input.ICommand OpenManageAchievementsWindow { get; set; }
+
+        public System.Windows.Input.ICommand ToggleAchievementCapstoneCommand { get; set; }
+
+        public System.Windows.Input.ICommand ToggleAchievementGoalCommand { get; set; }
 
         public bool HasRarityPercent => GlobalPercentUnlocked.HasValue;
 
@@ -163,9 +231,13 @@ namespace PlayniteAchievements.Models.Achievements
 
         public bool HasAchievements { get; set; } = true;
 
+        public bool ExcludedFromSummaries { get; set; }
+
         public string GameName { get; set; }
 
         public int AppId { get; set; }
+
+        public string ProviderGameKey { get; set; }
 
         public Guid? PlayniteGameId { get; set; }
 
@@ -173,22 +245,16 @@ namespace PlayniteAchievements.Models.Achievements
 
         public List<string> AchievementOrder { get; set; }
 
+        public List<string> AchievementCategoryOrder { get; set; }
+
+        public Dictionary<string, PlayniteAchievements.Models.Settings.CategoryImageOverrideData> AchievementCategoryImageOverrides { get; set; }
+
+        public PlayniteAchievements.Models.Settings.GameSummaryCategoryData GameSummaryCategory { get; set; }
+
         public List<AchievementDetail> Achievements { get; set; } = new List<AchievementDetail>();
 
-        public int? AggregateAchievementCount { get; set; }
-
-        public int? AggregateUnlockedCount { get; set; }
-
-        public int AchievementCount => Achievements?.Count > 0
-            ? Achievements.Count
-            : Math.Max(0, AggregateAchievementCount ?? 0);
-
-        public int UnlockedCount => Achievements?.Count > 0
-            ? Achievements.Count(a => a.Unlocked)
-            : Math.Min(Math.Max(0, AggregateUnlockedCount ?? 0), AchievementCount);
-
         public bool IsCompleted =>
-            (AchievementCount > 0 && UnlockedCount >= AchievementCount) ||
+            (Achievements?.Count > 0 && Achievements.All(a => a?.Unlocked == true)) ||
             (Achievements?.Any(a => a?.IsCapstone == true && a.Unlocked) == true);
     }
 }
@@ -200,6 +266,14 @@ namespace PlayniteAchievements.Services
         public static string GetLocalizedName(string providerKey)
         {
             return providerKey ?? string.Empty;
+        }
+
+        // Mirrors the real registry's last-resort visuals for a provider key, which the linked
+        // summary and overview builders call. The stub has no provider metadata, so it always
+        // takes the by-convention icon key and the neutral gray.
+        public static (string iconKey, string colorHex) ResolveProviderVisualsOrFallback(string providerKey)
+        {
+            return ("ProviderIcon" + providerKey, "#808080");
         }
 
         public virtual Task PrimeEnabledProvidersAsync()
@@ -262,6 +336,8 @@ namespace PlayniteAchievements.ViewModels
         {
         }
 
+        public PlayniteAchievements.Models.Achievements.AchievementDetail Source { get; set; }
+
         public string DisplayName { get; set; }
 
         public string Name => DisplayName;
@@ -270,11 +346,29 @@ namespace PlayniteAchievements.ViewModels
 
         public string SortingName { get; set; }
 
+        public int DisplayOrder { get; set; }
+
         public string GameName { get; set; }
 
         public string ProviderKey { get; set; }
 
+        public string FriendName { get; set; }
+
+        public bool FriendIsFavorite { get; set; }
+
+        public string FriendExternalUserId { get; set; }
+
+        public string FriendAvatarPath { get; set; }
+
         public Guid? PlayniteGameId { get; set; }
+
+        public System.Windows.Input.ICommand SetDynamicAchievementsGameCommand { get; set; }
+
+        public System.Windows.Input.ICommand FilterDynamicLibraryAchievementsByProviderCommand { get; set; }
+
+        public System.Windows.Input.ICommand OpenViewAchievementsWindow { get; set; }
+
+        public System.Windows.Input.ICommand OpenManageAchievementsWindow { get; set; }
 
         public string ApiName { get; set; }
 
@@ -284,13 +378,47 @@ namespace PlayniteAchievements.ViewModels
 
         public string CategoryLabel { get; set; }
 
-        public bool HasAchievementNote { get; set; }
+        public int CategoryOrderIndex { get; set; } = int.MaxValue;
+
+        public string CategoryArtPath { get; set; }
+
+        public System.Collections.Generic.IReadOnlyList<string> CategoryAncestorArtPaths { get; set; }
+
+        public string CleanCapturePath { get; set; }
+
+        public string NotificationCapturePath { get; set; }
+
+        public string FramedCapturePath { get; set; }
+
+        public string VideoCapturePath { get; set; }
+
+        public bool HasCaptures =>
+            CleanCapturePath != null || NotificationCapturePath != null ||
+            FramedCapturePath != null || VideoCapturePath != null;
+
+        public string GameIconPath { get; set; }
+
+        public string GameCoverPath { get; set; }
+
+        public string AchievementNote { get; set; }
+
+        public bool HasAchievementNote => !string.IsNullOrWhiteSpace(AchievementNote);
 
         public bool IsCapstone { get; set; }
+
+        public bool IsGoal { get; set; }
+
+        public int GoalOrderIndex { get; set; } = int.MaxValue;
+
+        public int DefaultOrderIndex { get; set; } = int.MaxValue;
 
         public bool Hidden { get; set; }
 
         public bool Unlocked { get; set; }
+
+        public virtual bool ShowUnlockDate => Unlocked;
+
+        public virtual bool ShowLockedProgress => !ShowUnlockDate;
 
         public DateTime? UnlockTimeUtc { get; set; }
 
@@ -317,14 +445,74 @@ namespace PlayniteAchievements.ViewModels
 
         public int? ProgressDenom { get; set; }
 
+        public bool HasProgress => ProgressNum.HasValue && ProgressDenom.HasValue && ProgressDenom.Value > 0;
+
         public double ProgressPercent =>
-            ProgressNum.HasValue && ProgressDenom.HasValue && ProgressDenom.Value > 0
+            HasProgress
                 ? ProgressNum.Value * 100.0 / ProgressDenom.Value
                 : 0;
 
         public bool ShowHiddenSuffix { get; set; }
 
-        public int DisplayOrder { get; set; }
+        public bool ShowHiddenIcon { get; set; }
+
+        public bool ShowHiddenTitle { get; set; }
+
+        public bool ShowHiddenDescription { get; set; }
+
+        public bool ShowLockedIcon { get; set; }
+
+        public bool UseSeparateLockedIconsWhenAvailable { get; set; }
+
+        public bool ShowRarityBar { get; set; } = true;
+
+        public bool ShowFriendSpoilers { get; set; }
+
+        public virtual bool UnlockedForVisibility => Unlocked;
+
+        public bool IsRevealed { get; set; }
+
+        public bool HasComparison { get; private set; }
+
+        public string ComparisonFriendName { get; private set; }
+
+        public string ComparisonFriendAvatarPath { get; private set; }
+
+        public DateTime? ComparisonUnlockTimeUtc { get; private set; }
+
+        public bool ComparisonUnlocked { get; private set; }
+
+        public string ComparisonOwnerName { get; private set; }
+
+        public string ComparisonOwnerAvatarPath { get; private set; }
+
+        public void ApplyComparison(
+            string friendName,
+            string friendAvatarPath,
+            DateTime? unlockTimeUtc,
+            bool unlocked,
+            string ownerName = null,
+            string ownerAvatarPath = null)
+        {
+            ComparisonFriendName = friendName;
+            ComparisonFriendAvatarPath = friendAvatarPath;
+            ComparisonUnlockTimeUtc = unlockTimeUtc;
+            ComparisonUnlocked = unlocked;
+            ComparisonOwnerName = ownerName;
+            ComparisonOwnerAvatarPath = ownerAvatarPath;
+            HasComparison = true;
+        }
+
+        public void ClearComparison()
+        {
+            HasComparison = false;
+            ComparisonFriendName = null;
+            ComparisonFriendAvatarPath = null;
+            ComparisonUnlockTimeUtc = null;
+            ComparisonUnlocked = false;
+            ComparisonOwnerName = null;
+            ComparisonOwnerAvatarPath = null;
+        }
 
         public static AchievementDisplayItem Create(
             PlayniteAchievements.Models.Achievements.GameAchievementData gameData,
@@ -416,8 +604,20 @@ namespace PlayniteAchievements.ViewModels
                 TrophyType = TrophyType,
                 CategoryType = CategoryType,
                 CategoryLabel = CategoryLabel,
+                CategoryOrderIndex = CategoryOrderIndex,
+                CategoryArtPath = CategoryArtPath,
+                CategoryAncestorArtPaths = CategoryAncestorArtPaths,
+                CleanCapturePath = CleanCapturePath,
+                NotificationCapturePath = NotificationCapturePath,
+                FramedCapturePath = FramedCapturePath,
+                VideoCapturePath = VideoCapturePath,
+                GameIconPath = GameIconPath,
+                GameCoverPath = GameCoverPath,
                 Hidden = Hidden,
                 IsCapstone = IsCapstone,
+                IsGoal = IsGoal,
+                GoalOrderIndex = GoalOrderIndex,
+                DefaultOrderIndex = DefaultOrderIndex,
                 Unlocked = Unlocked,
                 UnlockTimeUtc = UnlockTimeUtc,
                 GlobalPercentUnlocked = GlobalPercentUnlocked,
@@ -428,7 +628,16 @@ namespace PlayniteAchievements.ViewModels
                 PointsValue = PointsValue,
                 ProgressNum = ProgressNum,
                 ProgressDenom = ProgressDenom,
-                ShowHiddenSuffix = ShowHiddenSuffix
+                AchievementNote = AchievementNote,
+                ShowHiddenSuffix = ShowHiddenSuffix,
+                ShowHiddenIcon = ShowHiddenIcon,
+                ShowHiddenTitle = ShowHiddenTitle,
+                ShowHiddenDescription = ShowHiddenDescription,
+                ShowLockedIcon = ShowLockedIcon,
+                UseSeparateLockedIconsWhenAvailable = UseSeparateLockedIconsWhenAvailable,
+                ShowRarityBar = ShowRarityBar,
+                IsRevealed = IsRevealed,
+                Source = Source
             };
         }
 
@@ -442,12 +651,14 @@ namespace PlayniteAchievements.ViewModels
             bool showHiddenSuffix,
             bool showLockedIcon,
             bool useSeparateLockedIconsWhenAvailable,
-            bool showRarityGlow,
             bool showRarityBar = true,
             string sortingName = null,
             string gameIconPath = null,
-            string gameCoverPath = null)
+            string gameCoverPath = null,
+            int categoryOrderIndex = int.MaxValue,
+            string categoryArtPath = null)
         {
+            Source = source;
             DisplayName = source?.DisplayName;
             Description = source?.Description;
             GameName = gameName;
@@ -460,6 +671,9 @@ namespace PlayniteAchievements.ViewModels
             CategoryLabel = source?.Category;
             Hidden = source?.Hidden == true;
             IsCapstone = source?.IsCapstone == true;
+            IsGoal = source?.IsGoal == true;
+            GoalOrderIndex = source?.GoalOrderIndex ?? int.MaxValue;
+            DefaultOrderIndex = source?.DefaultOrderIndex ?? int.MaxValue;
             Unlocked = source?.Unlocked == true;
             UnlockTimeUtc = source?.UnlockTimeUtc;
             GlobalPercentUnlocked = source?.GlobalPercentUnlocked;
@@ -470,8 +684,23 @@ namespace PlayniteAchievements.ViewModels
             PointsValue = source?.Points;
             ProgressNum = source?.ProgressNum;
             ProgressDenom = source?.ProgressDenom;
-            HasAchievementNote = !string.IsNullOrWhiteSpace(source?.AchievementNote);
+            AchievementNote = source?.AchievementNote;
+            ShowHiddenIcon = showHiddenIcon;
+            ShowHiddenTitle = showHiddenTitle;
+            ShowHiddenDescription = showHiddenDescription;
             ShowHiddenSuffix = showHiddenSuffix;
+            ShowLockedIcon = showLockedIcon;
+            UseSeparateLockedIconsWhenAvailable = useSeparateLockedIconsWhenAvailable;
+            ShowRarityBar = showRarityBar;
+            GameIconPath = gameIconPath;
+            GameCoverPath = gameCoverPath;
+            CategoryOrderIndex = categoryOrderIndex;
+            // Mirrors the real display item: no game-asset fallback baked into the art path.
+            CategoryArtPath = categoryArtPath ?? source?.CategoryArtPath;
+            CleanCapturePath = source?.CleanCapturePath;
+            NotificationCapturePath = source?.NotificationCapturePath;
+            FramedCapturePath = source?.FramedCapturePath;
+            VideoCapturePath = source?.VideoCapturePath;
         }
     }
 }

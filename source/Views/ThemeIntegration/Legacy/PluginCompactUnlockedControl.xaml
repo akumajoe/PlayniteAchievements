@@ -15,8 +15,23 @@
         SuccessStory-compatible compact unlocked control for theme integration.
         Programmatically creates grid columns to fit achievements, with "+X more" in the last column.
     -->
-<local:CompactAchievementControlBase.Resources>
-        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    <local:CompactAchievementControlBase.Style>
+        <Style TargetType="local:CompactAchievementControlBase">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Persisted.EnableAchievementCompactUnlockedListControl}"
+                             Value="False">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </local:CompactAchievementControlBase.Style>
+
+    <local:CompactAchievementControlBase.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="pack://application:,,,/PlayniteAchievements;component/Resources/CommonResources.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
     </local:CompactAchievementControlBase.Resources>
 
     <StackPanel ClipToBounds="False">
@@ -65,10 +80,10 @@
                             VerticalAlignment="Center">
                     <TextBlock Text="{Binding DisplayName}"
                                FontWeight="SemiBold"
-                               Foreground="{DynamicResource TextBrush}"
+                               Foreground="{DynamicResource PlayAch.Brush.Text}"
                                TextWrapping="Wrap" />
                     <TextBlock Text="{Binding Description}"
-                               Foreground="{DynamicResource TextBrushDarker}"
+                               Foreground="{DynamicResource PlayAch.Brush.Text.Secondary}"
                                TextWrapping="Wrap"
                                TextTrimming="CharacterEllipsis" />
                 </StackPanel>
@@ -76,7 +91,7 @@
                 <TextBlock Grid.Column="3"
                            Margin="10,0,0,0"
                            VerticalAlignment="Top"
-                           Foreground="{DynamicResource TextBrush}"
+                           Foreground="{DynamicResource PlayAch.Brush.Text}"
                            Text="{Binding DateUnlocked, StringFormat={}{0:g}}" />
             </Grid>
         </Border>
@@ -85,7 +100,7 @@
                 BorderThickness="{DynamicResource ControlBorderThickness}"
                 Background="Transparent"
                 Padding="5"
-                BorderBrush="{DynamicResource NormalBorderBrush}">
+                BorderBrush="{DynamicResource PlayAch.Brush.Border}">
             <Grid Name="PART_GridContener"
                   MinHeight="{Binding RelativeSource={RelativeSource AncestorType=UserControl}, Path=IconHeight}"
                   Tag="{Binding RelativeSource={RelativeSource AncestorType=UserControl}, Path=IconHeight}">
@@ -95,7 +110,7 @@
                 <TextBlock Text="{DynamicResource LOCPlayAch_NoUnlockedAchievements}"
                            HorizontalAlignment="Center"
                            VerticalAlignment="Center"
-                           Foreground="{DynamicResource TextBrushDarker}">
+                           Foreground="{DynamicResource PlayAch.Brush.Text.Secondary}">
                     <TextBlock.Style>
                         <Style TargetType="{x:Type TextBlock}">
                             <Style.Triggers>
