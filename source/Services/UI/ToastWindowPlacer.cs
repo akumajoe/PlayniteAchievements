@@ -437,6 +437,7 @@ namespace PlayniteAchievements.Services.UI
             double monitorScale,
             bool alignRight,
             bool alignBottom,
+            bool alignCenter,
             double gapDip,
             out int x,
             out int y,
@@ -476,7 +477,7 @@ namespace PlayniteAchievements.Services.UI
                 physH = (int)Math.Ceiling(heightDip * renderScale);
             }
 
-            ComputeCorner(gameClientPhys, physW, physH, monitorScale, alignRight, alignBottom, gapDip, out x, out y);
+            ComputeCorner(gameClientPhys, physW, physH, monitorScale, alignRight, alignBottom, alignCenter, gapDip, out x, out y);
 
             // A negative gap is deliberate: with the card's border glow on, the window hangs past the
             // anchor edge so the visible card body still sits a constant distance in. Allow exactly
@@ -619,7 +620,8 @@ namespace PlayniteAchievements.Services.UI
         /// <summary>
         /// Pure corner math, shared between live window placement and the per-item screenshot/clip
         /// composites: the top-left of a box of the given physical size placed at the requested
-        /// corner of the client rect, inset by <paramref name="gapDip"/> scaled to the monitor.
+        /// corner (or, when <paramref name="alignCenter"/>, horizontally centered) of the client
+        /// rect, inset by <paramref name="gapDip"/> scaled to the monitor.
         /// </summary>
         public static void ComputeCorner(
             Rectangle gameClientPhys,
@@ -628,12 +630,15 @@ namespace PlayniteAchievements.Services.UI
             double monitorScale,
             bool alignRight,
             bool alignBottom,
+            bool alignCenter,
             double gapDip,
             out int x,
             out int y)
         {
             var gap = (int)Math.Round(gapDip * (monitorScale > 0 ? monitorScale : 1.0));
-            x = alignRight ? gameClientPhys.Right - physW - gap : gameClientPhys.Left + gap;
+            x = alignCenter
+                ? gameClientPhys.Left + ((gameClientPhys.Width - physW) / 2)
+                : (alignRight ? gameClientPhys.Right - physW - gap : gameClientPhys.Left + gap);
             y = alignBottom ? gameClientPhys.Bottom - physH - gap : gameClientPhys.Top + gap;
         }
 
@@ -806,6 +811,7 @@ namespace PlayniteAchievements.Services.UI
             double monitorScale,
             bool alignRight,
             bool alignBottom,
+            bool alignCenter,
             double gapDip,
             bool measure,
             ref PlacementCorrection correction,
@@ -814,7 +820,7 @@ namespace PlayniteAchievements.Services.UI
             outcome = default(PlacementOutcome);
             if (!TryComputeCorner(
                 window, card, slideDipX, slideDipY, gameClientPhys, renderScale, monitorScale,
-                alignRight, alignBottom, gapDip,
+                alignRight, alignBottom, alignCenter, gapDip,
                 out var x, out var y, out var clamped))
             {
                 return false;

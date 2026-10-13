@@ -30,20 +30,34 @@ namespace PlayniteAchievements.Tests.Services.UI
         {
             var anchor = Rectangle.FromLTRB(0, 0, 1920, 1040);
 
-            ToastWindowPlacer.ComputeCorner(anchor, 442, 138, 1.0, false, false, GapNoGlow, out var x, out var y);
+            ToastWindowPlacer.ComputeCorner(anchor, 442, 138, 1.0, false, false, false, GapNoGlow, out var x, out var y);
             Assert.AreEqual(8, x);
             Assert.AreEqual(8, y);
 
-            ToastWindowPlacer.ComputeCorner(anchor, 442, 138, 1.0, true, false, GapNoGlow, out x, out y);
+            ToastWindowPlacer.ComputeCorner(anchor, 442, 138, 1.0, true, false, false, GapNoGlow, out x, out y);
             Assert.AreEqual(1920 - 442 - 8, x);
             Assert.AreEqual(8, y);
 
-            ToastWindowPlacer.ComputeCorner(anchor, 442, 138, 1.0, false, true, GapNoGlow, out x, out y);
+            ToastWindowPlacer.ComputeCorner(anchor, 442, 138, 1.0, false, true, false, GapNoGlow, out x, out y);
             Assert.AreEqual(8, x);
             Assert.AreEqual(1040 - 138 - 8, y);
 
-            ToastWindowPlacer.ComputeCorner(anchor, 442, 138, 1.0, true, true, GapNoGlow, out x, out y);
+            ToastWindowPlacer.ComputeCorner(anchor, 442, 138, 1.0, true, true, false, GapNoGlow, out x, out y);
             Assert.AreEqual(1920 - 442 - 8, x);
+            Assert.AreEqual(1040 - 138 - 8, y);
+        }
+
+        [TestMethod]
+        public void ComputeCorner_CentersHorizontallyAtTheEdgeGap()
+        {
+            var anchor = Rectangle.FromLTRB(0, 0, 1920, 1040);
+
+            ToastWindowPlacer.ComputeCorner(anchor, 442, 138, 1.0, false, false, true, GapNoGlow, out var x, out var y);
+            Assert.AreEqual((1920 - 442) / 2, x);
+            Assert.AreEqual(8, y);
+
+            ToastWindowPlacer.ComputeCorner(anchor, 442, 138, 1.0, false, true, true, GapNoGlow, out x, out y);
+            Assert.AreEqual((1920 - 442) / 2, x);
             Assert.AreEqual(1040 - 138 - 8, y);
         }
 
@@ -52,7 +66,7 @@ namespace PlayniteAchievements.Tests.Services.UI
         {
             var anchor = Rectangle.FromLTRB(0, 0, 3840, 2120);
 
-            ToastWindowPlacer.ComputeCorner(anchor, 884, 276, 2.0, true, true, GapNoGlow, out var x, out var y);
+            ToastWindowPlacer.ComputeCorner(anchor, 884, 276, 2.0, true, true, false, GapNoGlow, out var x, out var y);
 
             Assert.AreEqual(3840 - 884 - 16, x);
             Assert.AreEqual(2120 - 276 - 16, y);
@@ -64,7 +78,7 @@ namespace PlayniteAchievements.Tests.Services.UI
             // A 4K monitor to the right of a 1080p primary: physical origin is not zero.
             var anchor = Rectangle.FromLTRB(1920, 0, 5760, 2120);
 
-            ToastWindowPlacer.ComputeCorner(anchor, 884, 276, 2.0, true, true, GapNoGlow, out var x, out var y);
+            ToastWindowPlacer.ComputeCorner(anchor, 884, 276, 2.0, true, true, false, GapNoGlow, out var x, out var y);
 
             Assert.AreEqual(5760 - 884 - 16, x);
             Assert.AreEqual(2120 - 276 - 16, y);

@@ -181,7 +181,6 @@ namespace PlayniteAchievements.Services.UI
         // One drift warning per wave; see WarnOnSettledCardDrift.
         private bool _placementDriftLogged;
         private bool _activeUsesCustomMediaSurface;
-        private bool _activeCenterHorizontally;
         private Dictionary<AchievementToastViewModel, FrameworkElement> _activeCardItems;
         private readonly Dictionary<AchievementToastViewModel, WebViewCaptureState> _activeWebViewFrames =
             new Dictionary<AchievementToastViewModel, WebViewCaptureState>();
@@ -2628,11 +2627,6 @@ namespace PlayniteAchievements.Services.UI
             _activeUsesCustomMediaSurface = !visible && cardItems.Count > 0 &&
                 _createCustomNotificationContent != null &&
                 cardItems.All(vm => _usesCustomNotification?.Invoke(vm.SourceEventArgs) == true);
-            var customPosition = ProviderRegistry.Settings<LocalSettings>()?.UnlockOverlayPosition
-                ?? LocalUnlockOverlayPosition.BottomRight;
-            _activeCenterHorizontally = _activeUsesCustomMediaSurface &&
-                (customPosition == LocalUnlockOverlayPosition.TopCenter ||
-                 customPosition == LocalUnlockOverlayPosition.BottomCenter);
             // Media-only waves owned by the custom renderer use its configured corner and have no
             // upstream glow margin. Ordinary waves retain the theme/plugin toast placement.
             _activePosition = _activeUsesCustomMediaSurface
@@ -2788,7 +2782,6 @@ namespace PlayniteAchievements.Services.UI
                 else
                 {
                     _activeUsesCustomMediaSurface = false;
-                    _activeCenterHorizontally = false;
                     _activePosition = EffectivePosition();
                     _activeCardGlow = wave[0].ToastGlowMargin.Top;
                 }
@@ -3064,7 +3057,7 @@ namespace PlayniteAchievements.Services.UI
                 {
                     trackRecorder = new ToastOverlayTrackRecorder(
                         _logger, TrackSampleIntervalMs(),
-                        AlignRight(), _activeCenterHorizontally, AlignBottom(),
+                        AlignRight(), AlignCenter(), AlignBottom(),
                         EffectiveGapDip(), _activeMonitorScale);
                     _trackRenderScratch = new Dictionary<AchievementToastViewModel, CardRenderScratch>();
                     trackSampleCount = 0;
@@ -3377,7 +3370,6 @@ namespace PlayniteAchievements.Services.UI
                 _activeSuppressZOrder = false;
                 _activeMonitorScale = 1.0;
                 _activeUsesCustomMediaSurface = false;
-                _activeCenterHorizontally = false;
                 _activeCardItems = null;
                 _activeWebViewFrames.Clear();
 
@@ -4072,7 +4064,24 @@ namespace PlayniteAchievements.Services.UI
 
         private bool AlignBottom()
         {
-            return _activePosition == ToastScreenCorner.BottomLeft || _activePosition == ToastScreenCorner.BottomRight;
+            return _activePosition == ToastScreenCorner.BottomLeft ||
+                _activePosition == ToastScreenCorner.BottomRight ||
+                _activePosition == ToastScreenCorner.BottomCenter;
+        }
+
+        private bool AlignCenter()
+        {
+            return _activePosition == ToastScreenCorner.TopCenter || _activePosition == ToastScreenCorner.BottomCenter;
+        }
+
+        // Where a box of the given physical size rests against the anchor under the wave's resolved
+        // position: the corner math (center-aware) at the wave's gap and monitor scale.
+        private void ComputeActiveCorner(
+            System.Drawing.Rectangle anchorPhys, int width, int height, out int x, out int y)
+        {
+            ToastWindowPlacer.ComputeCorner(
+                anchorPhys, width, height, _activeMonitorScale,
+                AlignRight(), AlignBottom(), AlignCenter(), EffectiveGapDip(), out x, out y);
         }
 
         // The window-edge gap in DIPs: the visible-body gap (CornerGapDip) less the card's own glow
@@ -4080,24 +4089,6 @@ namespace PlayniteAchievements.Services.UI
         private double EffectiveGapDip()
         {
             return (_activeUsesCustomMediaSurface ? 16d : CornerGapDip) - _activeCardGlow;
-        }
-
-        private void ComputeActiveCorner(
-            System.Drawing.Rectangle anchorPhys, int width, int height, out int x, out int y)
-        {
-            if (_activeCenterHorizontally)
-            {
-                var gap = (int)Math.Round(EffectiveGapDip() * Math.Max(0.1, _activeMonitorScale));
-                x = anchorPhys.Left + ((anchorPhys.Width - width) / 2);
-                y = AlignBottom()
-                    ? anchorPhys.Bottom - height - gap
-                    : anchorPhys.Top + gap;
-                return;
-            }
-
-            ToastWindowPlacer.ComputeCorner(
-                anchorPhys, width, height, _activeMonitorScale,
-                AlignRight(), AlignBottom(), EffectiveGapDip(), out x, out y);
         }
 
         private ToastScreenCorner ResolveCustomMediaPosition()
@@ -4109,9 +4100,11 @@ namespace PlayniteAchievements.Services.UI
                 case LocalUnlockOverlayPosition.BottomLeft:
                     return ToastScreenCorner.BottomLeft;
                 case LocalUnlockOverlayPosition.TopCenter:
+                    return ToastScreenCorner.TopCenter;
                 case LocalUnlockOverlayPosition.TopRight:
                     return ToastScreenCorner.TopRight;
                 case LocalUnlockOverlayPosition.BottomCenter:
+                    return ToastScreenCorner.BottomCenter;
                 case LocalUnlockOverlayPosition.BottomRight:
                 default:
                     return ToastScreenCorner.BottomRight;
@@ -4147,7 +4140,7 @@ namespace PlayniteAchievements.Services.UI
         }
 
         /// <summary>
-        /// Positions the toast at the anchor corner in physical pixels via
+        /// Positions the toast at the anchor corner or horizontal center in physical pixels via
         /// <see cref="ToastWindowPlacer"/>. Returns false (doing nothing) when the anchor can't be
         /// measured.
         /// </summary>
@@ -4160,23 +4153,11 @@ namespace PlayniteAchievements.Services.UI
             }
 
             var renderScale = ToastWindowPlacer.RenderScale(window);
-            bool placed;
-            if (_activeCenterHorizontally && window.ActualWidth > 0 && window.ActualHeight > 0)
-            {
-                var width = Math.Max(1, (int)Math.Round(window.ActualWidth * renderScale));
-                var height = Math.Max(1, (int)Math.Round(window.ActualHeight * renderScale));
-                ComputeActiveCorner(anchorPhys, width, height, out var x, out var y);
-                ToastWindowPlacer.MovePhysical(window, x, y);
-                placed = true;
-            }
-            else
-            {
-                placed = ToastWindowPlacer.PositionPhysical(
-                    window, _activeCardSurface, SlideOffsetDipX(), SlideOffsetDipY(),
-                    anchorPhys, renderScale, _activeMonitorScale, AlignRight(), AlignBottom(), EffectiveGapDip(),
-                    measure, ref _placementCorrection, out outcome);
-                LogPlacementAnomaly(window, anchorPhys, renderScale, outcome);
-            }
+            var placed = ToastWindowPlacer.PositionPhysical(
+                window, _activeCardSurface, SlideOffsetDipX(), SlideOffsetDipY(),
+                anchorPhys, renderScale, _activeMonitorScale, AlignRight(), AlignBottom(), AlignCenter(), EffectiveGapDip(),
+                measure, ref _placementCorrection, out outcome);
+            LogPlacementAnomaly(window, anchorPhys, renderScale, outcome);
 
             // Keep the toast directly above the game window in the z-order (not owned, so the game is
             // never raised). Re-asserted every placement/follow frame so it stays interleaved as the
@@ -5384,6 +5365,7 @@ namespace PlayniteAchievements.Services.UI
             {
                 case ToastScreenCorner.TopLeft:
                 case ToastScreenCorner.TopRight:
+                case ToastScreenCorner.TopCenter:
                     return false;
                 default:
                     return true;

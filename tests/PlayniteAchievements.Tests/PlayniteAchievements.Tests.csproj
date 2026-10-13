@@ -356,6 +356,7 @@
     <Compile Include="..\..\source\Models\Settings\NotificationStyleSettingsMigration.cs" Link="Source\Models\Settings\NotificationStyleSettingsMigration.cs" />
     <Compile Include="..\..\source\Models\Settings\RecordingEnums.cs" Link="Source\Models\Settings\RecordingEnums.cs" />
     <Compile Include="..\..\source\Models\Settings\ScreenshotResolution.cs" Link="Source\Models\Settings\ScreenshotResolution.cs" />
+    <Compile Include="..\..\source\Models\Settings\SanScreenshotView.cs" Link="Source\Models\Settings\SanScreenshotView.cs" />
     <Compile Include="..\..\source\Models\Settings\RarityColorSettings.cs" Link="Source\Models\Settings\RarityColorSettings.cs" />
     <Compile Include="..\..\source\Models\Settings\UnlockSoundSettings.cs" Link="Source\Models\Settings\UnlockSoundSettings.cs" />
     <Compile Include="..\..\source\Models\Settings\ResourceOverrideDescriptor.cs" Link="Source\Models\Settings\ResourceOverrideDescriptor.cs" />
