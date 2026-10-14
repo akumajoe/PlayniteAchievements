@@ -4,18 +4,19 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Net.Http;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Windows;
-using Playnite.SDK;
 using PlayniteAchievements.Providers.ImportedGameMetadata;
 using PlayniteAchievements.Providers.Local;
-using PlayniteAchievements.Providers.Settings;
-using PlayniteAchievements.Services.Logging;
-using PlayniteAchievements.Models;
 using PlayniteAchievements.Views;
 using PlayniteAchievements.Views.Dialogs;
 using PlayniteAchievements.Views.Helpers;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using Playnite.SDK;
+using PlayniteAchievements.Providers.Settings;
+using PlayniteAchievements.Services.Logging;
+using PlayniteAchievements.Models;
 
 namespace PlayniteAchievements.Providers.Steam
 {
@@ -26,13 +27,12 @@ namespace PlayniteAchievements.Providers.Steam
     {
         private static readonly ILogger Logger = PluginLogger.GetLogger(nameof(SteamSettingsView));
 
-        private readonly IPlayniteAPI _api;
         private readonly SteamSessionManager _sessionManager;
-        private readonly SteamOwnedGamesImporter _ownedGamesImporter;
         private SteamSettings _steamSettings;
+        private readonly IPlayniteAPI _api;
+        private readonly SteamOwnedGamesImporter _ownedGamesImporter;
         private CancellationTokenSource _steamImportCts;
         private bool _loadingSteamAccountState;
-
         public ObservableCollection<ImportedGameMetadataSourceOption> AvailableMetadataSources { get; } = new ObservableCollection<ImportedGameMetadataSourceOption>();
         public ObservableCollection<SteamAccountSettings> SteamAccounts { get; } = new ObservableCollection<SteamAccountSettings>();
 
@@ -91,7 +91,7 @@ namespace PlayniteAchievements.Providers.Steam
             set => SetValue(WebAuthStatusProperty, value);
         }
 
-        public static readonly DependencyProperty DefaultSteamAccountIdProperty =
+public static readonly DependencyProperty DefaultSteamAccountIdProperty =
             DependencyProperty.Register(
                 nameof(DefaultSteamAccountId),
                 typeof(string),
@@ -103,6 +103,7 @@ namespace PlayniteAchievements.Providers.Steam
             get => (string)GetValue(DefaultSteamAccountIdProperty);
             set => SetValue(DefaultSteamAccountIdProperty, value ?? string.Empty);
         }
+
 
         #endregion
 
@@ -123,18 +124,139 @@ namespace PlayniteAchievements.Providers.Steam
         {
             _steamSettings = settings as SteamSettings;
             base.Initialize(settings);
+            RefreshSteamAccountsState();
+            DefaultSteamAccountComboBox.ItemsSource = SteamAccounts;
+            RefreshAvailableMetadataSources();
+            ImportedGameMetadataSourceComboBox.ItemsSource = AvailableMetadataSources;
             SetAuthStatusVisualState(pending: true, success: false);
             WebAuthenticated = false;
             FullyConfigured = false;
             WebAuthStatus = ResourceProvider.GetString("LOCPlayAch_Auth_NotChecked");
-            ImportedGameMetadataSourceComboBox.ItemsSource = AvailableMetadataSources;
-            DefaultSteamAccountComboBox.ItemsSource = SteamAccounts;
-            RefreshAvailableMetadataSources();
-            RefreshSteamAccountsState();
-            _ = RefreshAuthStatusAsync();
         }
 
-        private static void OnDefaultSteamAccountIdChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        public async Task RefreshAuthStatusAsync()
+        {
+            try
+            {
+                SetAuthStatusChecking();
+                WebAuthStatus = ResourceProvider.GetString("LOCPlayAch_Auth_Checking");
+                var session = await _sessionManager.ResolveWebAuthSessionAsync(CancellationToken.None);
+                var result = session?.IsComplete == true
+                    ? AuthProbeResult.AlreadyAuthenticated(session.SteamId64)
+                    : AuthProbeResult.ProbeFailed();
+                UpdateAuthStatusFromResult(result);
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug(ex, "Steam auth probe failed during settings refresh.");
+                UpdateAuthStatusFromResult(AuthProbeResult.ProbeFailed());
+            }
+        }
+
+        private void UpdateAuthStatusFromResult(AuthProbeResult result)
+        {
+            var hasWebAuth = result.IsSuccess;
+            var probedSteamUserId = hasWebAuth && !string.IsNullOrWhiteSpace(result.UserId)
+                ? result.UserId.Trim()
+                : null;
+
+            if (!string.IsNullOrWhiteSpace(probedSteamUserId) && _steamSettings != null &&
+                !SteamAccounts.Any(a => a.SteamUserId == probedSteamUserId && string.IsNullOrWhiteSpace(a.SteamWebApiKey)))
+            {
+                var original = new SteamAccountSettings { DisplayName = "Original (browser account)", SteamUserId = probedSteamUserId };
+                SteamAccounts.Add(original);
+                if (string.IsNullOrWhiteSpace(DefaultSteamAccountId)) DefaultSteamAccountId = original.AccountId;
+                SyncSteamAccountsToSettings();
+            }
+
+            if (_steamSettings != null &&
+                string.IsNullOrWhiteSpace(_steamSettings.GetDefaultAccount()?.SteamWebApiKey) &&
+                !string.IsNullOrWhiteSpace(probedSteamUserId) &&
+                !string.Equals(_steamSettings.SteamUserId, probedSteamUserId, StringComparison.Ordinal))
+            {
+                _steamSettings.SteamUserId = probedSteamUserId;
+            }
+
+            WebAuthenticated = hasWebAuth;
+            FullyConfigured = hasWebAuth;
+            SetAuthStatusVisualState(pending: false, success: hasWebAuth);
+
+            if (hasWebAuth)
+            {
+                WebAuthStatus = ResourceProvider.GetString("LOCPlayAch_Auth_Authenticated");
+            }
+            else
+            {
+                var localized = ResourceProvider.GetString(result.MessageKey);
+                WebAuthStatus = string.IsNullOrWhiteSpace(localized) || string.Equals(localized, result.MessageKey, StringComparison.Ordinal)
+                    ? ResourceProvider.GetString("LOCPlayAch_Common_NotAuthenticated")
+                    : localized;
+            }
+        }
+
+        private async void LoginWeb_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                SetAuthBusy(true);
+                var result = await _sessionManager.AuthenticateInteractiveAsync(forceInteractive: true, ct: CancellationToken.None);
+                if (result.IsSuccess)
+                {
+                    await RefreshAuthStatusAsync();
+                    PlayniteAchievementsPlugin.NotifySettingsSaved();
+                }
+                else
+                {
+                    UpdateAuthStatusFromResult(result);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "Steam web login failed");
+            }
+            finally
+            {
+                SetAuthBusy(false);
+            }
+        }
+
+        private async void SteamAuth_Check_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                SetAuthBusy(true);
+                await RefreshAuthStatusAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "Steam auth check failed");
+            }
+            finally
+            {
+                SetAuthBusy(false);
+            }
+        }
+
+        private async void Logout_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                SetAuthBusy(true);
+                _sessionManager.ClearSession();
+                await RefreshAuthStatusAsync();
+                PlayniteAchievementsPlugin.NotifySettingsSaved();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "Steam logout failed");
+            }
+            finally
+            {
+                SetAuthBusy(false);
+            }
+        }
+
+private static void OnDefaultSteamAccountIdChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             var view = d as SteamSettingsView;
             view?.ApplyDefaultSteamAccountSelection(e.NewValue as string);
@@ -200,35 +322,6 @@ namespace PlayniteAchievements.Providers.Steam
 
             _steamSettings.SteamAccounts = SteamAccounts.Select(account => account?.Clone()).Where(account => account != null).ToList();
             _steamSettings.DefaultSteamAccountId = DefaultSteamAccountId;
-        }
-
-        private async void AddSteamAccount_Click(object sender, RoutedEventArgs e)
-        {
-            if (_steamSettings == null)
-            {
-                return;
-            }
-
-            var selectedDefault = _steamSettings.GetDefaultAccount();
-            var newAccount = selectedDefault != null
-                ? selectedDefault.Clone()
-                : new SteamAccountSettings();
-
-            newAccount.AccountId = Guid.NewGuid().ToString("N");
-            newAccount.DisplayName = BuildUniqueAccountDisplayName(newAccount.DisplayName);
-            if (selectedDefault != null)
-            {
-                newAccount.SteamUserId = string.Empty;
-                newAccount.SteamWebApiKey = string.Empty;
-            }
-
-            SteamAccounts.Add(newAccount);
-            DefaultSteamAccountId = newAccount.AccountId;
-            SyncSteamAccountsToSettings();
-
-            // Immediately prompt login so the newly added account can be authenticated.
-            // Pass the new account's ID so the probed userId is written only to that account.
-            await AuthenticateSelectedSteamAccountAsync(newAccount.AccountId);
         }
 
         private void AddSteamApiKey_Click(object sender, RoutedEventArgs e)
@@ -369,9 +462,9 @@ namespace PlayniteAchievements.Providers.Steam
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Logger.Debug(ex, "Failed resolving Steam ID from vanity URL during Add API key flow.");
+                Logger.Debug("Failed resolving Steam ID from vanity URL during API-key account lookup.");
                 return string.Empty;
             }
         }
@@ -497,7 +590,7 @@ namespace PlayniteAchievements.Providers.Steam
             }
 
             SyncSteamAccountsToSettings();
-            _ = RefreshAuthStatusAsync();
+
         }
 
         private void SteamAccountField_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
@@ -508,6 +601,45 @@ namespace PlayniteAchievements.Providers.Steam
             }
 
             SyncSteamAccountsToSettings();
+        }
+
+        private async void RecognizeSteamAccount_Click(object sender, RoutedEventArgs e)
+        {
+            var account = SteamAccounts.FirstOrDefault(a => a.AccountId == (sender as FrameworkElement)?.Tag as string);
+            if (account == null || string.IsNullOrWhiteSpace(account.SteamWebApiKey))
+            {
+                _api.Dialogs.ShowMessage("Enter an API key and Steam ID/profile URL first.", "Steam secondary account");
+                return;
+            }
+            var key = account.SteamWebApiKey.Trim();
+            var input = account.SteamUserId;
+            try
+            {
+                SetAuthBusy(true);
+                var steamId = await ResolveSteamUserIdInputAsync(key, input);
+                if (string.IsNullOrWhiteSpace(steamId)) return;
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) })
+                using (var response = await client.GetAsync("https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key="
+                    + Uri.EscapeDataString(key) + "&steamids=" + Uri.EscapeDataString(steamId)))
+                {
+                    if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Steam rejected the account lookup (HTTP " + (int)response.StatusCode + ").");
+                    var json = Newtonsoft.Json.Linq.JObject.Parse(await response.Content.ReadAsStringAsync());
+                    var player = (json["response"]?["players"] as Newtonsoft.Json.Linq.JArray)?.FirstOrDefault();
+                    var name = (string)player?["personaname"];
+                    if (string.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("Steam did not return a profile for that account.");
+                    if (!SteamAccounts.Contains(account) || account.SteamWebApiKey.Trim() != key || account.SteamUserId != input) return;
+                    account.SteamUserId = steamId;
+                    account.DisplayName = name;
+                    SyncSteamAccountsToSettings();
+                    _api.Dialogs.ShowMessage("Recognized " + name + " (" + steamId + ").", "Steam secondary account");
+                }
+            }
+            catch (Exception)
+            {
+                // Do not log HTTP exceptions: their URL can contain the user's API key.
+                _api.Dialogs.ShowMessage("Unable to recognize the account. Check the API key, profile URL/Steam ID, and network connection.", "Steam secondary account");
+            }
+            finally { SetAuthBusy(false); }
         }
 
         private void RefreshAvailableMetadataSources()
@@ -536,204 +668,6 @@ namespace PlayniteAchievements.Providers.Steam
             if (!AvailableMetadataSources.Any(option => string.Equals(option.Id, _steamSettings.ImportedGameMetadataSourceId, StringComparison.OrdinalIgnoreCase)))
             {
                 _steamSettings.ImportedGameMetadataSourceId = string.Empty;
-            }
-        }
-
-        public async Task RefreshAuthStatusAsync()
-        {
-            try
-            {
-                var result = await _sessionManager.ProbeAuthStateAsync(CancellationToken.None);
-                UpdateAuthStatusFromResult(result);
-            }
-            catch (Exception ex)
-            {
-                Logger.Debug(ex, "Steam auth probe failed during settings refresh.");
-                UpdateAuthStatusFromResult(AuthProbeResult.ProbeFailed());
-            }
-        }
-
-        private void UpdateAuthStatusFromResult(AuthProbeResult result)
-        {
-            var authenticatedAccount = ResolveSessionAuthenticatedAccount(result);
-            var hasWebAuth = authenticatedAccount != null;
-            var hasManualApiConfiguration = HasManualApiConfiguration();
-
-            if (_steamSettings != null &&
-                !string.IsNullOrWhiteSpace(result?.UserId) &&
-                !string.Equals(_steamSettings.SteamUserId, result.UserId.Trim(), StringComparison.Ordinal))
-            {
-                _steamSettings.SteamUserId = result.UserId.Trim();
-            }
-
-            WebAuthenticated = hasWebAuth;
-            FullyConfigured = hasWebAuth;
-            SetAuthStatusVisualState(pending: false, success: hasWebAuth);
-
-            if (hasWebAuth)
-            {
-                WebAuthStatus = ResourceProvider.GetString("LOCPlayAch_Auth_Authenticated");
-            }
-            else
-            {
-                var localized = ResourceProvider.GetString(result.MessageKey);
-                var notAuthenticatedText = string.IsNullOrWhiteSpace(localized) || string.Equals(localized, result.MessageKey, StringComparison.Ordinal)
-                    ? ResourceProvider.GetString("LOCPlayAch_Common_NotAuthenticated")
-                    : localized;
-
-                WebAuthStatus = hasManualApiConfiguration
-                    ? $"{notAuthenticatedText} ({ResourceProvider.GetString("LOCPlayAch_Settings_Steam_ApiAuthenticated")})"
-                    : notAuthenticatedText;
-            }
-        }
-
-        private bool HasManualApiConfiguration()
-        {
-            var account = _steamSettings?.GetDefaultAccount();
-            return account != null &&
-                   !string.IsNullOrWhiteSpace(account.SteamUserId) &&
-                   !string.IsNullOrWhiteSpace(account.SteamWebApiKey);
-        }
-
-        private SteamAccountSettings ResolveSessionAuthenticatedAccount(AuthProbeResult result)
-        {
-            if (result?.IsSuccess != true)
-            {
-                return null;
-            }
-
-            var probedUserId = result.UserId?.Trim();
-            if (string.IsNullOrWhiteSpace(probedUserId))
-            {
-                return null;
-            }
-
-            return SteamAccounts.FirstOrDefault(account =>
-                account != null &&
-                string.Equals(account.SteamUserId?.Trim(), probedUserId, StringComparison.OrdinalIgnoreCase));
-        }
-
-        private async void LoginWeb_Click(object sender, RoutedEventArgs e)
-        {
-            await AuthenticateSelectedSteamAccountAsync(DefaultSteamAccountId);
-        }
-
-        private async Task AuthenticateSelectedSteamAccountAsync(string targetAccountId)
-        {
-            try
-            {
-                SetAuthBusy(true);
-                var result = await _sessionManager.AuthenticateInteractiveAsync(forceInteractive: true, ct: CancellationToken.None);
-                if (result.IsSuccess)
-                {
-                    var normalizedUserId = result.UserId?.Trim();
-                    if (!string.IsNullOrWhiteSpace(normalizedUserId))
-                    {
-                        var existingAuthenticatedAccount = SteamAccounts.FirstOrDefault(a =>
-                            string.Equals(a?.SteamUserId?.Trim(), normalizedUserId, StringComparison.OrdinalIgnoreCase));
-
-                        if (existingAuthenticatedAccount != null)
-                        {
-                            // Keep authenticated account visible and prioritized.
-                            var existingIndex = SteamAccounts.IndexOf(existingAuthenticatedAccount);
-                            if (existingIndex > 0)
-                            {
-                                SteamAccounts.RemoveAt(existingIndex);
-                                SteamAccounts.Insert(0, existingAuthenticatedAccount);
-                            }
-
-                            DefaultSteamAccountId = existingAuthenticatedAccount.AccountId;
-                        }
-                        else
-                        {
-                            var targetAccount = SteamAccounts.FirstOrDefault(a =>
-                                string.Equals(a?.AccountId, targetAccountId, StringComparison.OrdinalIgnoreCase));
-
-                            // If the selected target is blank or no longer present, create a dedicated
-                            // authenticated session account and place it at the top of the list.
-                            var canHydrateTarget = targetAccount != null && string.IsNullOrWhiteSpace(targetAccount.SteamUserId);
-                            if (canHydrateTarget)
-                            {
-                                targetAccount.SteamUserId = normalizedUserId;
-
-                                var targetIndex = SteamAccounts.IndexOf(targetAccount);
-                                if (targetIndex > 0)
-                                {
-                                    SteamAccounts.RemoveAt(targetIndex);
-                                    SteamAccounts.Insert(0, targetAccount);
-                                }
-
-                                DefaultSteamAccountId = targetAccount.AccountId;
-                            }
-                            else
-                            {
-                                var authenticatedAccount = new SteamAccountSettings
-                                {
-                                    AccountId = Guid.NewGuid().ToString("N"),
-                                    DisplayName = BuildUniqueAccountDisplayName(ResourceProvider.GetString("LOCPlayAch_Settings_Steam_AccountDefaultName")),
-                                    SteamUserId = normalizedUserId,
-                                    SteamWebApiKey = string.Empty
-                                };
-
-                                SteamAccounts.Insert(0, authenticatedAccount);
-                                DefaultSteamAccountId = authenticatedAccount.AccountId;
-                            }
-                        }
-
-                        SyncSteamAccountsToSettings();
-                    }
-
-                    await RefreshAuthStatusAsync();
-                    PlayniteAchievementsPlugin.NotifySettingsSaved();
-                }
-                else
-                {
-                    UpdateAuthStatusFromResult(result);
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Error(ex, "Steam web login failed");
-            }
-            finally
-            {
-                SetAuthBusy(false);
-            }
-        }
-
-        private async void SteamAuth_Check_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                SetAuthBusy(true);
-                await RefreshAuthStatusAsync();
-            }
-            catch (Exception ex)
-            {
-                Logger.Error(ex, "Steam auth check failed");
-            }
-            finally
-            {
-                SetAuthBusy(false);
-            }
-        }
-
-        private async void Logout_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                SetAuthBusy(true);
-                _sessionManager.ClearSession();
-                await RefreshAuthStatusAsync();
-                PlayniteAchievementsPlugin.NotifySettingsSaved();
-            }
-            catch (Exception ex)
-            {
-                Logger.Error(ex, "Steam logout failed");
-            }
-            finally
-            {
-                SetAuthBusy(false);
             }
         }
 
@@ -942,6 +876,7 @@ namespace PlayniteAchievements.Providers.Steam
                 Dispatcher.BeginInvoke(new Action(() => AuthBusy = busy));
             }
         }
+
     }
 }
 

@@ -76,19 +76,14 @@ namespace PlayniteAchievements
             _windowService.OpenManageAchievementsView(gameId, initialTab, selectManageCategoriesSubTab);
         }
 
-        public void OpenManageAchievementsLocalFolderOverrideView(Guid gameId)
-        {
-            _windowService.OpenManageAchievementsLocalFolderOverrideView(gameId);
-        }
-
-        public void OpenCapstoneView(Guid gameId)
-        {
-            _windowService.OpenCapstoneView(gameId);
-        }
-
         public void OpenLocalAchievementsEditorView(Guid gameId)
         {
             _windowService.OpenLocalAchievementsEditorView(gameId);
+        }
+
+        internal void ReconfigureUnlockRecordingForSettingsSave()
+        {
+            ReconfigureUnlockRecording();
         }
 
         private void EnsureAchievementResourcesLoaded()

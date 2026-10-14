@@ -4,6 +4,7 @@ This directory turns the Santodan fork into a repeatable layer over an upstream
 PlayniteAchievements checkout. It intentionally does not modify or package:
 
 - `README.md`
+- `AddonDBManifest.yaml` (the fork's add-on database identity)
 - `source/extension.yaml`
 - `InstallerManifest.yaml`
 
@@ -24,6 +25,55 @@ The behavioral inventory in
 [`FORK_FEATURE_CHECKLIST.md`](FORK_FEATURE_CHECKLIST.md) is the post-merge test
 checklist for the fork features that have historically been lost during
 upstream integrations.
+
+The v4.0.1 recovery status and remaining live checks are recorded in
+[`../../UPSTREAM_V4.0.1_CONFLICT_REVIEW.md`](../../UPSTREAM_V4.0.1_CONFLICT_REVIEW.md).
+The 2026-10-07 bundle refresh captures the complete current working tree,
+including uncommitted fixes; it is not a new upstream fetch, commit, or push.
+Implementation coverage does not replace the pending live checks in that review.
+This refresh replaces the obsolete cache schema-v19 reconciliation with the
+working PS5 Experience Theme Migration/runtime adapter. The migrated theme
+enables correction of PS5Core Local trophy progress in memory, including after
+refreshes, without changing PS5Core.dll or the achievement database. Theme XAML
+contains no dependency on plugin assemblies/resources during startup. The user
+confirmed corrected fullscreen percentages on 2026-10-07, including the selected
+game's trophy-detail header. That header uses a separate PS5Core selected-game
+object. The adapter covers its percentage, earned count and progress bar, as well
+as the trophy overlay. PS5Core can omit Provider or populate it with a platform
+label such as `PC (Windows)`. Both list and detail progress use trophy counts
+consistently rather than gating correction on that unreliable provider label.
+The 2026-10-08 refresh also captures synchronization of individual achievement
+states and unlock dates from the fork cache by game ID and exact achievement API
+name. The adapter refreshes PS5Core filtering/sorting and notifies
+`CanSelectUnlocked`/`CanSelectLocked`, so the Unlocked filter becomes selectable
+after synchronization. The user confirmed the progress and filter fixes on
+2026-10-08. Regression coverage includes actual PS5Core 0.7.4 objects and a live
+WPF filter-button binding.
+The refresh also captures persistent Theme Migration scrollable/highlight and
+per-control choices, the automatic Limited/Full/Custom mode selector, and use of
+those saved options for first-time and upgraded themes. Desktop defaults to Full;
+Fullscreen retains Limited migration. The 15 targeted regression tests and
+Release rebuild passed; live settings-dialog/startup checks remain to be verified.
+Automatic theme migration notifications now restart Playnite when clicked, using
+Playnite's built-in restart method on the UI thread. The English notification
+explains this action. The Release rebuild passed; a live notification-click
+restart check remains pending.
+Git output and generated JSON/XML/patch reads explicitly use UTF-8, including
+under Windows PowerShell 5.1, to preserve non-ASCII text during export/application.
+The bundle also captures session unlock tracking to prevent cached achievements
+from replaying notifications after a refresh relocks them. Starting-cache unlocks,
+silent baseline observations, and announced unlocks remain remembered until the
+game stops. Seven targeted tests passed and the Release rebuild succeeded.
+The refresh also includes General > Maintenance log actions with file selection
+for opening, copying, and deleting logs, theme-aware dialog instructions, and the
+localized Cancel button. Opening logs only reports errors. The Release rebuild
+passed; live dialog checks are listed in the feature checklist.
+
+The refreshed bundle was dry-run validated against a separate clean checkout of
+upstream v4.0.1 (`79108753e3f8ddc775aa569ff8f5ed0362f3f22b`): the three-way
+patch, fork-only overlays, localization recipes, hashes, and protected-file
+checks passed. This validates replay against that baseline, not conflict-free
+application to an as-yet-unseen future upstream release.
 
 ## Refresh the bundle from the working fork
 
@@ -68,6 +118,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 The changes remain uncommitted and appear immediately in the current checkout's
 VS Code Source Control panel. The action preserves `README.md`,
 `source/extension.yaml`, `InstallerManifest.yaml`, and `tools/ForkMaintenance`.
+`AddonDBManifest.yaml` is also protected to retain the fork's update identity.
 It refuses to start if other local changes exist, preventing unrelated work from
 being overwritten. When upstream is not already an ancestor, the action also
 opens a no-content merge before assembling the updated files. After review,

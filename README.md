@@ -1,5 +1,19 @@
 <p align="center">
-  <img src="Images/big-icon.png" alt="Playnite Achievements icon" width="128" height="128">
+  <picture>
+    <source
+      media="(prefers-color-scheme: dark)"
+      srcset="BrandingPackage/01-logo-dark-backgrounds/pa-stacked-master-crest-wordmark-spaced-gold.png"
+    >
+    <source
+      media="(prefers-color-scheme: light)"
+      srcset="BrandingPackage/02-logo-light-backgrounds/pa-stacked-master-crest-wordmark-spaced-blue.png"
+    >
+    <img
+      src="BrandingPackage/01-logo-dark-backgrounds/pa-stacked-master-crest-wordmark-spaced-gold.png"
+      alt="Playnite Achievements"
+      width="400"
+    >
+  </picture>
 </p>
 
 <h1 align="center">Playnite Achievements - Santodan Fork</h1>
@@ -99,6 +113,21 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 
 ## Next release - TBD
 
+- `PS5-Experience` theme now available in the `Theme Migration`
+- `Automatically migrate new themes` will respect the selected settings
+- Clicking the `New Theme Migrated` popup will restart playnite automatically
+- Fixed achievement notification replay after cache relocks and update fork bundle
+- Added some log management buttons in the `General`--> `Maintenance` window
+
+## 2026-10-05 - v4.0.1.1
+
+- v4.0.1 merge
+- New UI for the `Local Overrides` tab in the `Manage Achievements` to be equal to the `Platform` tab in the `Settings`
+- RetroAchievements subnet selector was moved to the `Local Overrides` tab
+- `Local` platform separated into tabs for a more user friendly UI ( General / Import / SuccessStory)
+- `Custom Folders` and `Excluded Folders` are now presented side by side
+- Added an option to respect the achievements cache if the new refresh ahs less achievements than the cache
+  - Also added to the `Local Overrides` --> `Local saves & schema` for individual game toggle
 - Fixed Local achievement replay and screenshot floods
 - Added epic emulator compatibility
 - Fixed `SAN` transition screenshot
@@ -123,6 +152,10 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 - Added compatibility with `SOVEREIGN.ini`
 - Added the installation folder to the Auto-scanned folders' list
 - Added the file also to the `Local save folder override` shown path
+- Added `<gameUnlockedCount>` and `<gameAchievementCount>` to the notification wildcards
+- Added a setting for the extensions to continue to search for the local achievement file when it doesn't exist.
+  - It will respect all the default nd custom folders, for all acceptable files
+  - The setting for the interval for this check is under `Local` platform in the top of the `Local Achievements Folders and Settings` (default is 5 seconds)
 
 ## 2026-09-14 - v3.2.1.1
 
@@ -135,12 +168,12 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 - Fixed video recording not working with the custom notification style
 - Changed the `[InGameMonitor] Configured...` logs to only when there are changes or every 5 minutes
 
+## Old Changelogs
+<details>
+
 ## 2026-09-09 - v3.2.0.1
 
 - v3.2.0 merge
-
-## Old Changelogs
-<details>
 
 ## 2026-09-06 - v3.1.3.3
 

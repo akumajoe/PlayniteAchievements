@@ -5,6 +5,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:settings="clr-namespace:PlayniteAchievements.Providers.Settings"
              xmlns:steam="clr-namespace:PlayniteAchievements.Providers.Steam"
+             xmlns:controls="clr-namespace:PlayniteAchievements.Views.Controls"
              mc:Ignorable="d"
              d:DesignHeight="600"
              d:DesignWidth="700">
@@ -12,75 +13,36 @@
     <UserControl.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <ResourceDictionary Source="pack://application:,,,/PlayniteAchievements;component/Providers/ProviderSettingsStyles.xaml"/>
+                <ResourceDictionary Source="pack://application:,,,/PlayniteAchievements;component/Providers/ProviderSettingsScopedControlStyles.xaml"/>
             </ResourceDictionary.MergedDictionaries>
-
-            <!-- Disable auth buttons while busy -->
-            <Style x:Key="AuthActionButtonStyle"
-               TargetType="Button"
-               BasedOn="{StaticResource {x:Type Button}}">
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding AuthBusy, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                             Value="True">
-                    <Setter Property="IsEnabled" Value="False"/>
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-
-            <Style x:Key="AuthenticatedAuthActionButtonStyle"
-                   TargetType="Button"
-                   BasedOn="{StaticResource AuthActionButtonStyle}">
-                <Setter Property="IsEnabled" Value="False"/>
-                <Style.Triggers>
-                    <DataTrigger Binding="{Binding WebAuthenticated, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                 Value="True">
-                        <Setter Property="IsEnabled" Value="True"/>
-                    </DataTrigger>
-                    <DataTrigger Binding="{Binding AuthBusy, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                 Value="True">
-                        <Setter Property="IsEnabled" Value="False"/>
-                    </DataTrigger>
-                </Style.Triggers>
-            </Style>
         </ResourceDictionary>
     </UserControl.Resources>
 
+    <TabControl>
+        <TabItem Header="Original">
     <ScrollViewer VerticalScrollBarVisibility="Auto"
                   HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="20">
 
             <!-- Provider Header -->
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                <Viewbox Width="28" Height="28" Margin="0,0,12,0" VerticalAlignment="Center">
-                    <Path Data="{StaticResource GeoSteam}" Fill="#B0B0B0"/>
+            <StackPanel Style="{StaticResource ProviderHeaderPanelStyle}">
+                <Viewbox Style="{StaticResource ProviderHeaderIconStyle}">
+                    <Path Data="{StaticResource GeoSteam}" Fill="{StaticResource PlayAch.Brush.ProviderSteam}"/>
                 </Viewbox>
-                <TextBlock Text="{DynamicResource LOCPlayAch_Provider_Steam}"
-                           FontSize="20" FontWeight="Bold" VerticalAlignment="Center"
-                           Foreground="{DynamicResource TextBrush}"/>
+                <TextBlock Text="{DynamicResource LOCPlayAch_Provider_Steam}" Style="{StaticResource ProviderTitleTextStyle}"/>
             </StackPanel>
 
             <!-- Provider Enable Toggle -->
-            <Border Style="{StaticResource SectionBorderStyle}" Margin="0,0,0,12">
-                <CheckBox Content="{DynamicResource LOCPlayAch_Settings_ProviderEnabled}"
-                          IsChecked="{Binding Settings.IsEnabled, Mode=TwoWay}"
-                          FontWeight="SemiBold"
-                          FontSize="{DynamicResource FontSize}"/>
+            <Border Style="{StaticResource ProviderEnableToggleBorderStyle}" Grid.IsSharedSizeScope="True">
+                <controls:SettingRow Label="{DynamicResource LOCPlayAch_Settings_ProviderEnabled}"
+                                     FontWeight="SemiBold"
+                                     Margin="0">
+                    <CheckBox IsChecked="{Binding Settings.IsEnabled, Mode=TwoWay}"/>
+                </controls:SettingRow>
             </Border>
 
             <!-- Provider Disabled Message -->
-            <TextBlock Text="{DynamicResource LOCPlayAch_Settings_ProviderDisabledMessage}"
-                       Margin="0,0,0,16">
-                <TextBlock.Style>
-                    <Style TargetType="TextBlock" BasedOn="{StaticResource MutedTextStyle}">
-                        <Setter Property="Visibility" Value="Collapsed"/>
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding Settings.IsEnabled}" Value="False">
-                                <Setter Property="Visibility" Value="Visible"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </TextBlock.Style>
-            </TextBlock>
+            <TextBlock Text="{DynamicResource LOCPlayAch_Settings_ProviderDisabledMessage}" Style="{StaticResource ProviderDisabledMessageStyle}"/>
 
             <!-- Steam Connection Section -->
             <Border Style="{StaticResource SectionBorderStyle}"
@@ -95,9 +57,9 @@
 
                         <TextBlock Grid.Column="0"
                                    x:Name="AuthLabel"
-                                   Foreground="{DynamicResource TextBrush}"
+                                   Foreground="{DynamicResource PlayAch.Brush.Text}"
                                    VerticalAlignment="Top"
-                                   Margin="0,8,0,0"/>
+                                   Margin="{StaticResource PlayAch.Thickness.Top.Sm}"/>
 
                         <!-- Auth Card -->
                         <Border Grid.Column="1"
@@ -123,46 +85,63 @@
                                     <Button Content="{DynamicResource LOCPlayAch_Button_Login}"
                                             Click="LoginWeb_Click"
                                             Style="{StaticResource AuthActionButtonStyle}"
-                                            Margin="0,0,8,0"/>
+                                            Margin="{StaticResource PlayAch.Thickness.Right.Sm}"/>
                                     <Button Content="{DynamicResource LOCPlayAch_Common_Check}"
                                             Click="SteamAuth_Check_Click"
                                             Style="{StaticResource AuthActionButtonStyle}"
-                                            Margin="0,0,8,0"/>
-                                    <Button Content="{DynamicResource LOCPlayAch_Button_Clear}"
+                                            Margin="{StaticResource PlayAch.Thickness.Right.Sm}"/>
+                                    <Button Content="{DynamicResource LOCPlayAch_Button_SignOut}"
                                             Click="Logout_Click"
                                             Style="{StaticResource AuthActionButtonStyle}"/>
                                 </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </StackPanel>
+            </Border>
 
-                                <Grid Margin="0,12,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="180"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource SectionBorderStyle}"
+                    IsEnabled="{Binding Settings.IsEnabled}"
+                    Grid.IsSharedSizeScope="True">
+                <controls:SettingRow Label="{DynamicResource LOCPlayAch_Settings_SteamInstallPathOverride}"
+                                     Hint="{DynamicResource LOCPlayAch_Settings_SteamInstallPathOverride_Help}"
+                                     HorizontalContentAlignment="Stretch"
+                                     Margin="0">
+                    <TextBox Text="{Binding Settings.SteamInstallPathOverride, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             VerticalAlignment="Center"/>
+                </controls:SettingRow>
+            </Border>
 
-                                    <TextBlock Grid.Column="0"
-                                               Text="{DynamicResource LOCPlayAch_Settings_Steam_DefaultAccount}"
-                                               VerticalAlignment="Center"
-                                               Margin="0,8,12,0"/>
+            <Border Style="{StaticResource SectionBorderStyle}"
+                    IsEnabled="{Binding Settings.IsEnabled}"
+                    Grid.IsSharedSizeScope="True">
+                <controls:SettingRow Label="{DynamicResource LOCPlayAch_Settings_SteamHuntersCategories}"
+                                     Hint="{DynamicResource LOCPlayAch_Settings_SteamHuntersCategories_Help}"
+                                     Margin="0">
+                    <CheckBox IsChecked="{Binding Settings.UseSteamHuntersForCategories, Mode=TwoWay}"/>
+                </controls:SettingRow>
+            </Border>
 
-                                    <StackPanel Grid.Column="1">
-                                        <ComboBox x:Name="DefaultSteamAccountComboBox"
-                                                  DisplayMemberPath="DisplayName"
-                                                  SelectedValuePath="AccountId"
-                                                  SelectedValue="{Binding DefaultSteamAccountId, RelativeSource={RelativeSource AncestorType=UserControl}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  Padding="4"/>
-                                        <TextBlock Style="{StaticResource MutedTextStyle}"
-                                                   Margin="0,6,0,0"
-                                                   Text="{DynamicResource LOCPlayAch_Settings_Steam_DefaultAccount_Hint}"
-                                                   TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                </Grid>
-
-                                <TextBlock Style="{StaticResource MutedTextStyle}"
-                                           Margin="0,10,0,0"
-                                           Text="{DynamicResource LOCPlayAch_Settings_Steam_AccountsHint}"
-                                           TextWrapping="Wrap"/>
-
-                                <ItemsControl ItemsSource="{Binding SteamAccounts, RelativeSource={RelativeSource AncestorType=UserControl}}"
+        </StackPanel>
+    </ScrollViewer>
+        </TabItem>
+        <TabItem Header="Secondary">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="20">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="IsEnabled" Value="{Binding Settings.IsEnabled}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding AuthBusy, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                    <Setter Property="IsEnabled" Value="False" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+<TextBlock Text="Active account" Style="{StaticResource SectionHeaderStyle}" />
+<ComboBox x:Name="DefaultSteamAccountComboBox" DisplayMemberPath="DisplayLabel" SelectedValuePath="AccountId" SelectedValue="{Binding DefaultSteamAccountId, RelativeSource={RelativeSource AncestorType=UserControl}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,8,0,8" />
+<TextBlock Text="Select the account used for achievement refreshes and imports. Add a secondary account using its API key and Steam ID/profile URL; no additional browser login is needed." TextWrapping="Wrap" Style="{StaticResource MutedTextStyle}" />
+<ItemsControl ItemsSource="{Binding SteamAccounts, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                               Margin="0,10,0,0">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
@@ -205,6 +184,8 @@
                                                                  Padding="4"
                                                                  TextChanged="SteamAccountField_TextChanged"/>
                                                     </Grid>
+                                                    <Button Content="Recognize account" Click="RecognizeSteamAccount_Click"
+                                                            Tag="{Binding AccountId}" HorizontalAlignment="Left" Margin="0,8,0,0" />
 
                                                     <Grid Margin="0,8,0,0">
                                                         <Grid.ColumnDefinitions>
@@ -245,11 +226,7 @@
                                         Style="{StaticResource AuthActionButtonStyle}"
                                         HorizontalAlignment="Left"/>
                                 </StackPanel>
-                            </StackPanel>
-                        </Border>
-                    </Grid>
-
-                    <!-- Steam Import Section -->
+<!-- Steam Import Section -->
                     <Grid Margin="0,14,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="180"/>
@@ -327,30 +304,22 @@
                                            Margin="0,6,0,0"
                                            Text="{DynamicResource LOCPlayAch_Settings_Steam_IncludeFamilySharedGamesHint}"
                                            TextWrapping="Wrap"/>
+                                <TextBlock Text="Family-sharing discovery requires the Original browser session; API-key imports read only the selected account's owned games."
+                                           Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,6,0,0" />
 
                                 <Button Content="{DynamicResource LOCPlayAch_Settings_Steam_ImportOwnedGames}"
                                         Click="ImportOwnedGames_Click"
-                                        Style="{StaticResource AuthenticatedAuthActionButtonStyle}"
+                                        Style="{StaticResource AuthActionButtonStyle}"
                                         Margin="0,10,0,0"
                                         HorizontalAlignment="Left"/>
                             </StackPanel>
                         </Border>
                     </Grid>
 
-                    <Border Style="{StaticResource SectionBorderStyle}" Margin="0,12,0,0">
-                        <StackPanel>
-                            <CheckBox Content="{DynamicResource LOCPlayAch_Settings_SteamHuntersCategories}"
-                                      IsChecked="{Binding Settings.UseSteamHuntersForCategories, Mode=TwoWay}"
-                                      FontWeight="SemiBold"/>
-                            <TextBlock Text="{DynamicResource LOCPlayAch_Settings_SteamHuntersCategories_Help}"
-                                       Style="{StaticResource MutedTextStyle}"
-                                       Margin="18,6,0,0"
-                                       TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </Border>
+
                 </StackPanel>
-            </Border>
-        </StackPanel>
-    </ScrollViewer>
+            </ScrollViewer>
+        </TabItem>
+    </TabControl>
 </settings:ProviderSettingsViewBase>
 

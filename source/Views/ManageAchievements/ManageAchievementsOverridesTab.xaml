@@ -13,6 +13,7 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="pack://application:,,,/PlayniteAchievements;component/Resources/ManageAchievementsScopedControlStyles.xaml"/>
+                <ResourceDictionary Source="pack://application:,,,/PlayniteAchievements;component/Providers/ProviderIcons.xaml"/>
             </ResourceDictionary.MergedDictionaries>
             <Style x:Key="SubTabRadioStyle" TargetType="RadioButton">
                 <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
@@ -20,26 +21,30 @@
                 <Setter Property="BorderThickness" Value="0" />
                 <Setter Property="Cursor" Value="Hand" />
                 <Setter Property="FontSize" Value="{DynamicResource FontSize}" />
-                <Setter Property="Padding" Value="10,6" />
-                <Setter Property="Margin" Value="0,0,8,0" />
+                <Setter Property="Padding" Value="10,12" />
+                <Setter Property="Margin" Value="0" />
                 <Setter Property="HorizontalContentAlignment" Value="Left" />
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="RadioButton">
                             <Border x:Name="BorderRoot"
                                     Background="{TemplateBinding Background}"
-                                    CornerRadius="4"
+                                    CornerRadius="0"
                                     Padding="{TemplateBinding Padding}">
+                                <Grid>
+                                <Border x:Name="SelectionAccent" Width="3" HorizontalAlignment="Left" Background="{DynamicResource PlayAch.Brush.Accent}" Visibility="Collapsed" Margin="-10,-12,0,-12" />
                                 <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                                                   VerticalAlignment="Center" />
+                                </Grid>
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsChecked" Value="True">
-                                    <Setter TargetName="BorderRoot" Property="Background" Value="#1FFFFFFF" />
+                                    <Setter TargetName="BorderRoot" Property="Background" Value="{DynamicResource PlayAch.Brush.Grid.RowSelectedBackground}" />
+                                    <Setter TargetName="SelectionAccent" Property="Visibility" Value="Visible" />
                                     <Setter Property="FontWeight" Value="SemiBold" />
                                 </Trigger>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="BorderRoot" Property="Background" Value="#14FFFFFF" />
+                                    <Setter TargetName="BorderRoot" Property="Background" Value="{DynamicResource PlayAch.Brush.Grid.RowHoverBackground}" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -49,10 +54,12 @@
         </ResourceDictionary>
     </UserControl.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto"
-                  HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Margin="0">
+    <Grid Margin="0">
+            <!-- This view is now hosted as the dedicated Local Overrides page. The former
+                 Main/Local outer switch is obsolete; the local-provider tabs below are
+                 the page's navigation. -->
             <StackPanel Orientation="Horizontal"
+                        Visibility="Collapsed"
                         Margin="{StaticResource PlayAch.Thickness.Bottom.Md}">
                 <RadioButton Content="{DynamicResource LOCPlayAch_GameOptions_Overrides_Tab_Main}"
                              GroupName="ManageAchievementOverrideTabs"
@@ -64,17 +71,7 @@
                              IsChecked="{Binding SelectedOverridesTab, Mode=TwoWay, Converter={StaticResource EnumToBool}, ConverterParameter=Local}" />
             </StackPanel>
 
-            <StackPanel>
-                <StackPanel.Style>
-                    <Style TargetType="StackPanel">
-                        <Setter Property="Visibility" Value="Collapsed" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedOverridesTab}" Value="Main">
-                                <Setter Property="Visibility" Value="Visible" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </StackPanel.Style>
+            <StackPanel Visibility="Collapsed">
             <Border Style="{StaticResource CardBorderStyle}" Margin="{StaticResource PlayAch.Thickness.Bottom.Md}">
                 <StackPanel>
                     <TextBlock Text="{DynamicResource LOCPlayAch_ManageAchievements_Overrides_ExclusionHeader}"
@@ -286,38 +283,83 @@
             </Border>
             </StackPanel>
 
-            <StackPanel>
-                <StackPanel.Style>
-                    <Style TargetType="StackPanel">
-                        <Setter Property="Visibility" Value="Collapsed" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedOverridesTab}" Value="Local">
-                                <Setter Property="Visibility" Value="Visible" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </StackPanel.Style>
-
-                <StackPanel Orientation="Horizontal"
-                            Margin="{StaticResource PlayAch.Thickness.Bottom.Md}">
-                    <RadioButton Content="{DynamicResource LOCPlayAch_GameOptions_Overrides_LocalSubTab_LocalSavesSchema}"
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="220" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Background="{DynamicResource PlayAch.Brush.Surface}" BorderBrush="{DynamicResource PlayAch.Brush.Border}" BorderThickness="0,0,1,0">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <RadioButton
                                  GroupName="ManageAchievementLocalOverrideTabs"
                                  Style="{StaticResource SubTabRadioStyle}"
-                                 IsChecked="{Binding SelectedLocalOverrideTab, Mode=TwoWay, Converter={StaticResource EnumToBool}, ConverterParameter=LocalSavesSchema}" />
-                    <RadioButton Content="{DynamicResource LOCPlayAch_GameOptions_Overrides_LocalSubTab_Steam}"
+                                 IsChecked="{Binding SelectedLocalOverrideTab, Mode=TwoWay, Converter={StaticResource EnumToBool}, ConverterParameter=LocalSavesSchema}">
+                        <RadioButton.Content>
+                            <StackPanel Orientation="Horizontal">
+                                <Image x:Name="LocalProviderNavigationIcon" Width="18" Height="18"
+                                       Margin="0,0,8,0" VerticalAlignment="Center"
+                                       RenderOptions.BitmapScalingMode="HighQuality" />
+                                <TextBlock Text="{DynamicResource LOCPlayAch_GameOptions_Overrides_LocalSubTab_LocalSavesSchema}" VerticalAlignment="Center" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </RadioButton.Content>
+                    </RadioButton>
+                    <RadioButton
                                  GroupName="ManageAchievementLocalOverrideTabs"
                                  Style="{StaticResource SubTabRadioStyle}"
-                                 IsChecked="{Binding SelectedLocalOverrideTab, Mode=TwoWay, Converter={StaticResource EnumToBool}, ConverterParameter=Steam}" />
-                    <RadioButton Content="Epic"
+                                 IsChecked="{Binding SelectedLocalOverrideTab, Mode=TwoWay, Converter={StaticResource EnumToBool}, ConverterParameter=Steam}">
+                        <RadioButton.Content>
+                            <StackPanel Orientation="Horizontal">
+                                <Viewbox Width="18" Height="18" Margin="0,0,8,0" VerticalAlignment="Center">
+                                    <Path Data="{StaticResource GeoSteam}" Fill="{DynamicResource PlayAch.Brush.ProviderSteam}" />
+                                </Viewbox>
+                                <TextBlock Text="{DynamicResource LOCPlayAch_GameOptions_Overrides_LocalSubTab_Steam}" VerticalAlignment="Center" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </RadioButton.Content>
+                    </RadioButton>
+                    <RadioButton
                                  GroupName="ManageAchievementLocalOverrideTabs"
                                  Style="{StaticResource SubTabRadioStyle}"
-                                 IsChecked="{Binding SelectedLocalOverrideTab, Mode=TwoWay, Converter={StaticResource EnumToBool}, ConverterParameter=Epic}" />
-                    <RadioButton Content="{DynamicResource LOCPlayAch_GameOptions_Overrides_LocalSubTab_LumaPlay}"
+                                 IsChecked="{Binding SelectedLocalOverrideTab, Mode=TwoWay, Converter={StaticResource EnumToBool}, ConverterParameter=Epic}">
+                        <RadioButton.Content>
+                            <StackPanel Orientation="Horizontal">
+                                <Viewbox Width="18" Height="18" Margin="0,0,8,0" VerticalAlignment="Center">
+                                    <Path Data="{StaticResource GeoEpic}" Fill="{DynamicResource PlayAch.Brush.ProviderEpic}" />
+                                </Viewbox>
+                                <TextBlock Text="Epic" VerticalAlignment="Center" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </RadioButton.Content>
+                    </RadioButton>
+                    <RadioButton
                                  GroupName="ManageAchievementLocalOverrideTabs"
                                  Style="{StaticResource SubTabRadioStyle}"
-                                 IsChecked="{Binding SelectedLocalOverrideTab, Mode=TwoWay, Converter={StaticResource EnumToBool}, ConverterParameter=LumaPlay}" />
+                                 IsChecked="{Binding SelectedLocalOverrideTab, Mode=TwoWay, Converter={StaticResource EnumToBool}, ConverterParameter=LumaPlay}">
+                        <RadioButton.Content>
+                            <StackPanel Orientation="Horizontal">
+                                <Viewbox Width="18" Height="18" Margin="0,0,8,0" VerticalAlignment="Center">
+                                    <Path Data="{StaticResource GeoUbisoft}" Fill="{DynamicResource PlayAch.Brush.ProviderUbisoft}" />
+                                </Viewbox>
+                                <TextBlock Text="{DynamicResource LOCPlayAch_GameOptions_Overrides_LocalSubTab_LumaPlay}" VerticalAlignment="Center" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </RadioButton.Content>
+                    </RadioButton>
+                    <RadioButton
+                                 GroupName="ManageAchievementLocalOverrideTabs"
+                                 Style="{StaticResource SubTabRadioStyle}"
+                                 IsChecked="{Binding SelectedLocalOverrideTab, Mode=TwoWay, Converter={StaticResource EnumToBool}, ConverterParameter=RetroAchievements}">
+                        <RadioButton.Content>
+                            <StackPanel Orientation="Horizontal">
+                                <Viewbox Width="18" Height="18" Margin="0,0,8,0" VerticalAlignment="Center">
+                                    <Path Data="{StaticResource GeoRetroAchievements}" Fill="{DynamicResource PlayAch.Brush.ProviderRetroAchievements}" />
+                                </Viewbox>
+                                <TextBlock Text="RetroAchievements" VerticalAlignment="Center" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </RadioButton.Content>
+                    </RadioButton>
                 </StackPanel>
-
+                </ScrollViewer>
+                </Border>
+                <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="16,0,0,0">
                 <Grid>
                     <Grid>
                         <Grid.Style>
@@ -595,9 +637,98 @@
                     </StackPanel>
                 </Border>
                     </StackPanel>
-                </Grid>
-            </StackPanel>
 
-        </StackPanel>
-    </ScrollViewer>
+                    <StackPanel>
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedLocalOverrideTab}" Value="RetroAchievements">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+
+                        <Border Style="{StaticResource CardBorderStyle}"
+                                Margin="{StaticResource PlayAch.Thickness.Bottom.Md}">
+                            <StackPanel>
+                                <TextBlock Text="{DynamicResource LOCPlayAch_ManageAchievements_Overrides_RaHeader}"
+                                           Style="{StaticResource SectionHeaderStyle}" />
+                                <TextBlock Text="{DynamicResource LOCPlayAch_ManageAchievements_Overrides_RaHint}"
+                                           Foreground="{DynamicResource PlayAch.Brush.Text}"
+                                           Opacity="{StaticResource PlayAch.Opacity.Hint}"
+                                           TextWrapping="Wrap"
+                                           Margin="{StaticResource PlayAch.Thickness.Top.Compact}" />
+                                <TextBlock Text="{Binding ProviderOverrideStatusText}"
+                                           Foreground="{DynamicResource PlayAch.Brush.Text}"
+                                           TextWrapping="Wrap"
+                                           Margin="{StaticResource PlayAch.Thickness.Top.Sm}" />
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="220" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Grid.Column="0"
+                                             Text="{Binding RetroAchievementsGameIdInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    <Button Grid.Column="1"
+                                            Content="{DynamicResource LOCPlayAch_Button_Apply}"
+                                            Command="{Binding ApplyProviderOverrideCommand}"
+                                            Margin="{StaticResource PlayAch.Thickness.Left.Sm}" />
+                                    <Button Grid.Column="2"
+                                            Content="{DynamicResource LOCPlayAch_Button_Clear}"
+                                            Command="{Binding ClearProviderOverrideCommand}"
+                                            Margin="{StaticResource PlayAch.Thickness.Left.Sm}" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorderStyle}">
+                            <StackPanel>
+                                <TextBlock Text="{DynamicResource LOCPlayAch_ManageAchievements_Overrides_RaSubsets_Header}"
+                                           Style="{StaticResource SectionHeaderStyle}" />
+                                <TextBlock Text="{DynamicResource LOCPlayAch_ManageAchievements_Overrides_RaSubsets_Hint}"
+                                           Foreground="{DynamicResource PlayAch.Brush.Text}"
+                                           Opacity="{StaticResource PlayAch.Opacity.Hint}"
+                                           TextWrapping="Wrap"
+                                           Margin="{StaticResource PlayAch.Thickness.Top.Compact}" />
+                                <Button Content="{DynamicResource LOCPlayAch_ManageAchievements_Overrides_RaSubsets_LoadButton}"
+                                        Command="{Binding LoadRetroAchievementsSubsetsCommand}"
+                                        HorizontalAlignment="Left"
+                                        Margin="0,8,0,0" />
+                                <TextBlock Text="{Binding RetroAchievementsSubsetStatusText}"
+                                           Foreground="{DynamicResource PlayAch.Brush.Text}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,8,0,0" />
+                                <Border BorderBrush="{DynamicResource PlayAch.Brush.Border}"
+                                        BorderThickness="1"
+                                        Padding="8"
+                                        Margin="0,8,0,0"
+                                        MaxHeight="260"
+                                        Visibility="{Binding HasRetroAchievementsSubsetOptions, Converter={StaticResource BoolToVis}}">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                        <ItemsControl ItemsSource="{Binding RetroAchievementsSubsetOptions}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox Content="{Binding DisplayName}"
+                                                              IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              Margin="0,3" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </Border>
+                                <Button Content="{DynamicResource LOCPlayAch_Button_Apply}"
+                                        Command="{Binding ApplyProviderOverrideCommand}"
+                                        HorizontalAlignment="Left"
+                                        Margin="0,10,0,0"
+                                        Visibility="{Binding HasRetroAchievementsSubsetOptions, Converter={StaticResource BoolToVis}}" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
 </UserControl>

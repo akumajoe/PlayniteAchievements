@@ -24,6 +24,47 @@ namespace PlayniteAchievements.Services.Tests
     public class GameCustomDataStoreTests
     {
         [TestMethod]
+        public void CachedUnlockProtectionOverride_PreservesFalseTrueAndInheritance()
+        {
+            var tempDir = CreateTempDirectory();
+            var gameId = Guid.NewGuid();
+            try
+            {
+                foreach (var value in new[] { false, true })
+                {
+                    var store = new GameCustomDataStore(tempDir);
+                    store.Update(gameId, data => data.PreserveCachedUnlocksOnRefreshOverride = value);
+                    Assert.IsTrue(new GameCustomDataStore(tempDir).TryLoad(gameId, out var reloaded));
+                    Assert.AreEqual(value, reloaded.PreserveCachedUnlocksOnRefreshOverride.Value);
+                }
+                var finalStore = new GameCustomDataStore(tempDir);
+                finalStore.Update(gameId, data => data.PreserveCachedUnlocksOnRefreshOverride = null);
+                Assert.IsFalse(finalStore.TryLoad(gameId, out _));
+            }
+            finally { DeleteDirectory(tempDir); }
+        }
+
+        [TestMethod]
+        public void SteamAccountOverrideAlone_SurvivesSaveAndStoreReload()
+        {
+            var tempDir = CreateTempDirectory();
+            var gameId = Guid.NewGuid();
+            try
+            {
+                var store = new GameCustomDataStore(tempDir);
+                store.Update(gameId, data => data.SteamAccountIdOverride = "secondary-account");
+                Assert.IsTrue(store.TryLoad(gameId, out var saved));
+                Assert.AreEqual("secondary-account", saved.SteamAccountIdOverride);
+                var reopened = new GameCustomDataStore(tempDir);
+                Assert.IsTrue(reopened.TryLoad(gameId, out var reloaded));
+                Assert.AreEqual("secondary-account", reloaded.SteamAccountIdOverride);
+                reopened.Update(gameId, data => data.SteamAccountIdOverride = null);
+                Assert.IsFalse(reopened.TryLoad(gameId, out _));
+            }
+            finally { DeleteDirectory(tempDir); }
+        }
+
+        [TestMethod]
         public void Save_BlankPayloadDoesNotCreateDatabase()
         {
             var tempDir = CreateTempDirectory();
@@ -517,6 +558,7 @@ namespace PlayniteAchievements.Services.Tests
 
                 var packagePath = Path.Combine(tempDir, "notification.pa");
                 store.ExportPortablePackage(gameId, packagePath);
+                Assert.IsFalse(store.IsCustomAchievementsPackage(packagePath), "A whole-game package replaces, it does not merge.");
                 using (var archive = ZipFile.OpenRead(packagePath))
                 {
                     var entryNames = archive.Entries.Select(entry => entry.FullName).ToList();
@@ -764,7 +806,8 @@ namespace PlayniteAchievements.Services.Tests
                 Assert.AreEqual(gameId, imported.PlayniteGameId);
                 Assert.IsTrue(imported.ExcludedFromRefreshes == true);
                 Assert.IsTrue(imported.ExcludedFromSummaries == true);
-                Assert.AreEqual("imported-capstone", imported.ManualCapstoneApiName);
+                Assert.IsTrue(imported.CapstonesMaterialized);
+                Assert.AreEqual("imported-capstone", imported.Capstones.Single().ApiName);
                 Assert.AreEqual("https://example.com/new-unlocked.png", imported.AchievementUnlockedIconOverrides["ach_one"]);
                 Assert.AreEqual("https://example.com/new-locked.png", imported.AchievementLockedIconOverrides["ach_one"]);
                 Assert.AreEqual("imported note", imported.AchievementNotes["ach_one"]);
@@ -1044,7 +1087,7 @@ namespace PlayniteAchievements.Services.Tests
                 Assert.IsNull(((JObject)migratedProviderSettings["Manual"])["AchievementLinks"]);
 
                 Assert.IsTrue(store.TryLoad(existingGameId, out var existing));
-                Assert.AreEqual("existing-capstone", existing.ManualCapstoneApiName);
+                Assert.AreEqual("existing-capstone", existing.Capstones.Single().ApiName);
                 Assert.IsTrue(existing.UseSeparateLockedIconsOverride == true);
                 Assert.IsTrue(existing.ExcludedFromRefreshes == true);
                 AssertProviderOverride(existing, "RetroAchievements", "222");
@@ -1053,7 +1096,7 @@ namespace PlayniteAchievements.Services.Tests
                 Assert.IsTrue(legacyOnly.ExcludedFromRefreshes == true);
                 Assert.IsTrue(legacyOnly.ExcludedFromSummaries == true);
                 Assert.IsTrue(legacyOnly.UseSeparateLockedIconsOverride == true);
-                Assert.AreEqual("legacy-only-capstone", legacyOnly.ManualCapstoneApiName);
+                Assert.AreEqual("legacy-only-capstone", legacyOnly.Capstones.Single().ApiName);
                 CollectionAssert.AreEqual(new[] { "ach_one", "ach_two" }, legacyOnly.AchievementOrder);
                 Assert.AreEqual("Main", legacyOnly.AchievementCategoryOverrides["ach_one"]);
                 Assert.AreEqual("DLC|Singleplayer", legacyOnly.AchievementCategoryTypeOverrides["ach_one"]);
@@ -1233,7 +1276,7 @@ namespace PlayniteAchievements.Services.Tests
                 });
 
                 Assert.IsTrue(store.TryLoad(gameId, out var initial));
-                Assert.AreEqual("capstone_one", initial.ManualCapstoneApiName);
+                Assert.AreEqual("capstone_one", initial.Capstones.Single().ApiName);
 
                 store.Delete(gameId);
                 Assert.IsFalse(store.TryLoad(gameId, out _));
@@ -1245,7 +1288,7 @@ namespace PlayniteAchievements.Services.Tests
                 });
 
                 Assert.IsTrue(store.TryLoad(gameId, out var updated));
-                Assert.AreEqual("capstone_two", updated.ManualCapstoneApiName);
+                Assert.AreEqual("capstone_two", updated.Capstones.Single().ApiName);
             }
             finally
             {

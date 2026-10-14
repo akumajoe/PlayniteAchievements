@@ -4,6 +4,73 @@ Use this checklist after applying the bundle to a new upstream release. The
 bundle captures the source automatically; this list records the behavior that
 must still be verified in Playnite.
 
+## v4.0.1 recovery update — 2026-10-05
+
+These items describe the current integration, not a promise that every older
+fork feature below has been restored. See `UPSTREAM_V4.0.1_CONFLICT_REVIEW.md`
+at the repository root for remaining missing features and live-verification tasks.
+
+- Manage Achievements preserves the upstream shell and provides Local in
+  Platform Override, a dedicated Local Overrides page, and a separate Custom
+  Schema tab. Local Overrides uses a left-side platform-icon sidebar with
+  Local Saves & Schema, Steam, Epic, LumaPlay, and RetroAchievements pages.
+  Local icons use the configured provider color and custom/borrowed icon.
+- Overview Custom Data shows override values, including RetroAchievements
+  base/subset names and IDs. The top-level Clear clears cache, custom data,
+  platform routing, and local overrides; upstream's Clear Custom Data label stays.
+- Custom Schema loads JSON or accepts manual schema editing and correlates with
+  the Local achievement file before updating the unified Editor. Legacy manual
+  navigation and portable-package entry points still require review.
+- View Achievements retains the upstream editor action and adds Edit Local File
+  plus the title-bar refresh button. The separate file editor accepts 24-hour
+  times, writes intentional relocks to disk/cache, and has Open File Location.
+  Verify save/restart persistence in Playnite.
+- Local settings have General, Import, and SuccessStory tabs; General shows
+  custom folders on the left and excluded folders on the right.
+- Steam settings have Original (upstream browser controls) and Secondary
+  (API-key account management/imports). Profile recognition uses an API key
+  plus Steam ID/profile URL; secondary accounts do not require another login.
+  Selected-account credentials and per-game account overrides drive refreshes.
+  Override-only custom records persist; Apply/Clear start a single-game refresh.
+  Verify real-account switching and imports. Family-sharing discovery remains
+  Original-browser-session-only, not secondary-account parity.
+- Preserve cached unlocks on refresh is enabled by default under General >
+  Maintenance. The per-game three-state control in Local Saves & Schema applies
+  to every provider: keep cached unlocks, accept refreshed states, or use global.
+  Apply refreshes immediately. Disabled protection allows valid lower/zero
+  unlock counts; failed/empty payloads remain protected. Explicit editor saves
+  still permit intentional relocks regardless of normal-refresh protection.
+- The upstream Overview layout includes the fork's All Achievements tab,
+  Custom (Manual) selector, and working Configure/manual ordering actions.
+- Desktop scrollable-plus-highlight migration, compact migration, and Fullscreen
+  migration were user-confirmed working. Score-snapshot persistence still needs review.
+- Live custom notifications and Memories captures use the fork template and
+  settings. WPF and WebView/SAN frames, top/bottom-center placement, custom
+  transitions, shared sanitized folder names, and SAN Screenshot View 1/2 were
+  restored; captures were user-confirmed working. Active-card glow, effective
+  quality selection, and recorder reconfiguration still need comparison.
+- Locale-dependent score and Guild Wars 2 separator differences are accepted
+  by the user; they are not outstanding fork-restoration tasks. Historical test
+  expectations may still need alignment, without forcing a display change.
+- Latest verification: required Release rebuild passed; 19 Steam-focused tests
+  and 93 cache/custom-data-focused tests passed. The historical full suite has
+  not been rerun since these fixes; do not treat its old failures as current.
+- Preserve AddonDBManifest.yaml, source/extension.yaml, InstallerManifest.yaml,
+  and README.md during bundle application. No commit/push without user approval.
+
+## Maintenance logs
+
+- General > Maintenance ends with Open logs, Copy Logs, and Delete Logs.
+- Each action lets the user select playnite.log, extensions.log, and/or
+  playniteachievements.log. Copy then asks for a destination folder and confirms
+  overwrites; Delete confirms the selected files before deleting them.
+- Playnite logs resolve from the application folder; the achievement log resolves
+  from the plugin user data folder. Missing or locked files are reported individually.
+- Selection dialog instructions follow the theme text color, and Cancel uses the
+  plugin localization key. Successful Open operations show no completion dialog.
+- Verify these dialogs in Playnite, including cancellation, copying active logs,
+  and log recreation after deletion. The Release rebuild passed.
+
 ## Achievement notifications
 
 - The separate Achievement Notification settings page is populated with its
@@ -16,6 +83,10 @@ must still be verified in Playnite.
   Exophase.
 - Custom templates, custom sounds, screenshots, recordings, and test
   notifications still work.
+- The Achievement wildcard group includes `<gameUnlockedCount>` and
+  `<gameAchievementCount>`. Custom notification text resolves them to the
+  current game's unlocked and total achievement counts in live notifications,
+  previews, WebView/SAN overlays, and captures.
 - Custom notification primary and secondary icon backgrounds can each be
   enabled or disabled and assigned an independent color. The settings survive
   style-slot save/load and JSON template export/import, and the HTML builder
@@ -57,6 +128,13 @@ must still be verified in Playnite.
 
 Primary fork areas:
 
+- In-game monitoring remembers starting-cache unlocks, silent baseline reads,
+  and notification claims for the whole game session. With cached-unlock
+  protection disabled, a refresh that relocks achievements followed by a local
+  Steam read restoring them must not replay notifications. New achievements
+  still notify once across both monitoring sources; stopping the game clears
+  session tracking. Regression coverage: `InGameSessionUnlocksTests`.
+
 - `source/Services/NotificationPublisher.cs`
 - `source/Services/Logging/AchievementNotificationDebugLog.cs`
 - `source/Services/InGameAchievementPoller.cs`
@@ -75,6 +153,11 @@ Primary fork areas:
 
 - Local appears with its default icon and settings defaults.
 - Local folder discovery, extra/excluded paths, import, and refresh work.
+- While a game is running and its Local achievement file has not been found,
+  folder discovery bypasses cached misses and rescans all configured roots for
+  the supported JSON/INI filenames. The user-configured 1–300 second interval
+  appears above **Refresh achievements when a game closes**; normal monitoring
+  takes over after a file is detected.
 - Local settings show **Use SteamHunters for Categories** enabled by default
   immediately above **Steam path (optional)**. When enabled, Local refreshes
   use the resolved Steam schema App ID to populate SteamHunters category labels,
@@ -105,8 +188,8 @@ Primary fork areas:
   restarting Playnite, the saved selection remains active and stale achievements
   from previously included sets do not return from the SQLite cache.
 - Custom schema loading, editing, creation, and per-game enable/disable work.
-- Manage Achievements contains Overrides → Main/Local and Local →
-  Local Saves & Schema/Steam/Epic/LumaPlay.
+- Manage Achievements contains a dedicated Local Overrides page with a left
+  sidebar: Local Saves & Schema/Steam/Epic/LumaPlay/RetroAchievements.
 - In Manage Achievements, selecting Automatic or Clear under Change Provider
   removes both the preferred-provider selection and any higher-priority forced
   provider override.
@@ -173,6 +256,27 @@ Primary fork areas:
 - Automatic migration handles first-time themes and upgraded themes when its
   Theme Migration toggle is enabled, and skips both when disabled. The toggle
   remains persisted and defaults to enabled.
+- Scrollable achievements, highlight-latest, per-control Legacy/Modern choices,
+  and automatic migration mode survive settings saves, reopening, JSON
+  serialization, cloning, and copying. Custom control dictionaries are independent
+  in cloned/copied settings.
+- Automatic migration uses the saved Limited/Full/Custom mode and options for
+  both first-time and upgraded desktop themes. Full is the desktop default;
+  Fullscreen always uses Limited. Full respects scrollable/highlight choices;
+  Custom also respects each control choice. Verify the mode selector reflects
+  manual migration buttons and changes to custom choices.
+- Theme Migration regression coverage: 15 targeted settings and migration tests
+  passed and the Release rebuild succeeded on 2026-10-07. Broader settings
+  round-trip tests still report the pre-existing missing
+  `PreserveCachedUnlocksOnRefresh` clone/copy handling; this is separate from
+  the Theme Migration settings.
+- Clicking an automatic theme migration notification restarts Playnite directly
+  through the host's built-in `PlayniteApplication.Current.Restart(true)` path
+  on the UI thread. The English notification explains the click action. Verify
+  in Playnite that activation restarts in the current mode and applies the theme;
+  notification creation alone must not restart it. If restart is unavailable,
+  the failure is logged and an error asks for a manual restart. Release rebuild
+  passed; live activation remains pending.
 - The non-scrollable legacy option, scrollable option, revert, and StartPage
   compatibility apply/revert actions work.
 - Fullscreen library summaries normalize legacy `Local` rows whose platform was
@@ -185,6 +289,39 @@ Primary fork areas:
   `PlayniteAchievements` panel/toggle names and their references, while migrating
   plugin bindings and custom-control prefixes. Restore the migration backup
   before migrating themes whose names were merged by the old migration.
+- PS5 Experience Limited migration marks the PS5Core trophy list with
+  `Uid="PlayAch.Ps5TrophyProgress"`. The fork's runtime adapter corrects Local
+  rows from their unlocked trophy counts and refreshes percentage, counter,
+  and progress-bar bindings after PS5Core replaces rows or resets totals.
+- The adapter discovers live trophy windows after startup, including copied
+  templates that lose their marker or miss the initial Loaded event. Named-list
+  discovery is enabled only when the active fullscreen theme contains the
+  migration marker. Reverting the theme and restarting disables it.
+- PS5 migration introduces no plugin assembly or converter-resource dependency
+  into theme XAML: Playnite loads themes before plugins. It does not modify
+  PS5Core.dll or the achievement database. `[PS5Progress]` log entries record
+  adapter activation, live-list attachment, and corrected Local counts.
+- Re-migration removes the earlier failed markup extensions, inline converters,
+  and compiled-dictionary imports before enabling the runtime adapter.
+- Opening a game from the PS5 trophy list keeps its detail header consistent
+  with the list: four unlocked trophies out of 100 display `4%` and `4/100`.
+  Cover both `AchievementsViewModel.SelectedGame` and `OverlayTrophyGame`.
+  PS5Core 0.7.4 can omit Provider; the adapter must derive progress for those
+  rows rather than falling back to stale zero totals. Provider can also contain
+  platform labels such as `PC (Windows)`; do not use it to gate correction.
+  Both list and detail progress derive from trophy counts. Navigation and refreshed
+  selected-game objects update percentage, earned count and progress bar.
+  The empty-provider regression and actual PS5Core tests pass; the user
+  confirmed the detail-header correction on 2026-10-07.
+- PS5 achievement detail items synchronize unlock states and dates from the
+  fork's cached game data using the Playnite game ID and exact achievement API
+  name, without rewriting the database or PS5Core.dll. Unmatched or ambiguous
+  API names are left untouched. Reapply PS5Core's filter/sorting after changes,
+  and notify `CanSelectUnlocked` and `CanSelectLocked` so the filter buttons update.
+- With 11 unlocked achievements out of 100, All shows the correct states,
+  Unlocked is enabled and lists the 11 earned achievements, and Locked lists
+  the remaining 89. The user confirmed the fix on 2026-10-08. Cover changed
+  cached states, unlock dates, idempotence and the bound button's enabled state.
 - The StartPage add-on's Recent Achievements widget sorts achievements globally
   by unlock time while still respecting both its total maximum and its
   maximum-per-game setting.
@@ -208,7 +345,9 @@ Primary fork areas:
   language rather than English, the Windows locale, or the Playnite UI
   language, while already-localized visible achievement text remains intact.
 - Per-game Steam-account overrides use the correct account.
-- Owned-games and family-sharing import retain their fork behavior.
+- Owned-game imports retain metadata-source and overwrite/skip controls.
+  Family-sharing discovery requires the Original browser account; API-key
+  imports read the selected secondary account's owned games only.
 - Imported-game metadata source selection works for Steam and Local imports.
 
 Primary fork areas:
@@ -225,6 +364,24 @@ Primary fork areas:
   are never exported or applied by the fork bundle.
 
 ## Minimum validation
+
+- PS5 Experience shows consistent Local-game trophy counts and completion:
+  four unlocked achievements out of 100 display `4%` and `4/100`.
+  The obsolete schema-v19 database reconciliation was removed; preserve the
+  Theme Migration/runtime adapter instead. Release rebuild and recovery/adapter
+  tests passed on 2026-10-07, including actual PS5Core 0.7.4 Local rows, row
+  replacement, reset counts, unload cleanup, theme loading
+  before the plugin, and late discovery. The user confirmed corrected progress
+  in fullscreen Playnite on 2026-10-07.
+  Run `tools/ThemeMigration/Test-Ps5TrophyProgress.ps1` for migration recovery and
+  `tools/ThemeMigration/Test-Ps5TrophyProgressBridge.ps1` with PowerShell `-STA`
+  for the runtime adapter. These scripts use the local Playnite/PS5Core paths;
+  adjust those paths when testing on another installation.
+- On 2026-10-08, the progress adapter and achievement-state regression tests
+  passed against PS5Core 0.7.4, including the `PC (Windows)` provider label and
+  actual WPF Unlocked-button availability updates. Run
+  `tools/ThemeMigration/Test-Ps5AchievementStates.ps1` with PowerShell `-STA`.
+  Release rebuild passed; the user confirmed working progress and filters.
 
 1. Run `Apply-ForkBundle.ps1 -DryRun` against a clean upstream worktree.
 2. Apply the bundle.

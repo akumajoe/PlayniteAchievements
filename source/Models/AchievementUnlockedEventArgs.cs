@@ -6,7 +6,15 @@ namespace PlayniteAchievements.Models
     {
         Unknown = 0,
         ProviderReported = 1,
-        SourceObservation = 2
+        SourceObservation = 2,
+
+        /// <summary>
+        /// Anchored on the local observation after discarding a provider-reported stamp that
+        /// cannot be placed on the capture timeline -- a remote source's server clock. Separate
+        /// from <see cref="SourceObservation"/>, which means no stamp was available at all, so a
+        /// clip timing report says which of the two happened.
+        /// </summary>
+        SourceObservationForeignStamp = 3
     }
 
     public sealed class AchievementUnlockedEventArgs : EventArgs
@@ -143,6 +151,13 @@ namespace PlayniteAchievements.Models
         /// they do not mix with a game's genuine unlock captures.
         /// </summary>
         public bool IsTestFire { get; set; }
+
+        /// <summary>
+        /// The fork's custom live-unlock renderer owns the visible notification for this event.
+        /// The upstream event still flows to capture and cache consumers, but its standard toast
+        /// must remain hidden so the user does not receive two notifications.
+        /// </summary>
+        public bool SuppressStandardToast { get; set; }
 
         /// <summary>
         /// For fire-test previews only: forces which template renders this notification (the

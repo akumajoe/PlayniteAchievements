@@ -102,7 +102,8 @@ namespace PlayniteAchievements.Services.UI
         private readonly bool _alignRight;
         private readonly bool _alignCenterHorizontally;
         private readonly bool _alignBottom;
-        private readonly double _gapDip;
+        private readonly double _gapXDip;
+        private readonly double _gapYDip;
         private readonly double _monitorScale;
 
         /// <summary>
@@ -142,7 +143,7 @@ namespace PlayniteAchievements.Services.UI
         public ToastOverlayTrackRecorder(
             ILogger logger, double sampleIntervalMs,
             bool alignRight, bool alignCenterHorizontally, bool alignBottom,
-            double gapDip, double monitorScale)
+            double gapXDip, double gapYDip, double monitorScale)
         {
             _logger = logger;
             _sampleIntervalMs = sampleIntervalMs > 0 ? sampleIntervalMs : 1;
@@ -150,7 +151,8 @@ namespace PlayniteAchievements.Services.UI
             _alignRight = alignRight;
             _alignCenterHorizontally = alignCenterHorizontally;
             _alignBottom = alignBottom;
-            _gapDip = gapDip;
+            _gapXDip = gapXDip;
+            _gapYDip = gapYDip;
             _monitorScale = monitorScale > 0 ? monitorScale : 1.0;
         }
 
@@ -437,7 +439,8 @@ namespace PlayniteAchievements.Services.UI
                         AlignRight = _alignRight,
                         AlignCenterHorizontally = _alignCenterHorizontally,
                         AlignBottom = _alignBottom,
-                        GapDip = _gapDip,
+                        GapXDip = _gapXDip,
+                        GapYDip = _gapYDip,
                         MonitorScale = _monitorScale,
                     },
                 };

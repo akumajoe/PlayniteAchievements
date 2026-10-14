@@ -449,7 +449,11 @@ namespace PlayniteAchievements
                 };
             }
 
-            var preferredProvider = _achievementOverridesService?.GetPreferredProviderOverride(game.Id);
+            var preferredProvider = GameCustomDataLookup.TryGetProviderOverride(
+                game.Id,
+                out var providerOverride)
+                    ? providerOverride?.ProviderKey
+                    : null;
             var providerSection = PluginLocalGameMenuSection + "|" +
                 ResourceProvider.GetString("LOCPlayAch_Menu_LocalProvider_Change");
             yield return new GameMenuItem
@@ -989,6 +993,11 @@ namespace PlayniteAchievements
                             GC.WaitForPendingFinalizers();
                             GC.Collect();
                             Common.MemoryDiagnostics.Log(_logger, "manual.afterGC", before, "trigger=menu");
+
+                            // Process totals say memory grew; the retention report says which
+                            // graph is still rooted. It forces its own blocking collect, so the
+                            // per-cache and live= counts mean "still reachable".
+                            LogRetentionDiagnostics("manual.retention");
                         }
                         catch (Exception ex)
                         {
