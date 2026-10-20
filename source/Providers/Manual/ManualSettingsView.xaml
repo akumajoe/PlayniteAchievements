@@ -79,13 +79,14 @@
                                      Margin="{StaticResource PlayAch.Thickness.Right.Sm}"/>
 
                             <Button Grid.Column="1"
-                                Content="{DynamicResource LOCPlayAch_Button_Browse}"
+                                Content="..."
+                                ToolTip="{DynamicResource LOCPlayAch_Button_Browse}"
                                     Click="ManualLegacyBrowse_Click"
                                     Padding="{StaticResource PlayAch.Thickness.ButtonPadding.Compact}"/>
                         </Grid>
                     </controls:SettingRow>
 
-                    <Button Content="{DynamicResource LOCPlayAch_Settings_Manual_Legacy_ImportButton}"
+                    <Button Content="{DynamicResource LOCPlayAch_Settings_Manual_Legacy_ImportButton}" ContentTemplate="{DynamicResource PlayAch.ButtonContent.Import}"
                             Click="ManualLegacyImport_Click"
                             Padding="{StaticResource PlayAch.Thickness.ButtonPadding.Wide}"
                             MinWidth="180"

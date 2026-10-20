@@ -1,5 +1,19 @@
 # Santodan fork feature checklist
 
+## Custom notification progress - 2026-10-20
+
+- Verify a mixed-progress game: `<achievementName>` automatically shows `(X/Y)`
+  for achievements with counters, and ordinary names stay unchanged.
+- Verify `<achievementName> - <achievementDescription>` puts `(X/Y)` directly
+  beside the name, even with `<progress>` or `<progressPercent>` on another line.
+- Verify explicit X/Y on the name line is not duplicated, counters do not leak
+  between notifications, and saved templates are unchanged.
+- Verify the progress token buttons, template builder sample counters, silent
+  progress popups, and final unlock counter. Nine focused tests cover formatting
+  and notification-copy behavior; final live Playnite verification is pending.
+- Keep native `progress`/`max_progress` support and the existing Custom Schema
+  editor. Do not reintroduce the removed cat schema or aggregation experiment.
+
 Use this checklist after applying the bundle to a new upstream release. The
 bundle captures the source automatically; this list records the behavior that
 must still be verified in Playnite.
@@ -21,7 +35,7 @@ at the repository root for remaining missing features and live-verification task
 - Custom Schema loads JSON or accepts manual schema editing and correlates with
   the Local achievement file before updating the unified Editor. Legacy manual
   navigation and portable-package entry points still require review.
-- View Achievements retains the upstream editor action and adds Edit Local File
+- View Achievements retains the upstream Edit Achievements action and adds Edit Local Achievements
   plus the title-bar refresh button. The separate file editor accepts 24-hour
   times, writes intentional relocks to disk/cache, and has Open File Location.
   Verify save/restart persistence in Playnite.
@@ -60,6 +74,13 @@ at the repository root for remaining missing features and live-verification task
 
 ## Maintenance logs
 
+- Fork-specific messages use logger names ending in -Santodan, including
+  [PlayniteAchievementsPlugin-Santodan] for fork calls sharing the plugin logger.
+  Upstream messages retain their original names. All severity levels and exception
+  overloads preserve their destination; repeated wrapping adds the suffix only once.
+- Santodan-Fork is the first settings tab, with General, Platforms, Achievement
+  Notification, and Theme Migration inside it. Its General page hosts cached-unlock
+  protection and log tools; upstream General/Maintenance retains upstream content.
 - General > Maintenance ends with Open logs, Copy Logs, and Delete Logs.
 - Each action lets the user select playnite.log, extensions.log, and/or
   playniteachievements.log. Copy then asks for a destination folder and confirms
@@ -68,6 +89,14 @@ at the repository root for remaining missing features and live-verification task
   from the plugin user data folder. Missing or locked files are reported individually.
 - Selection dialog instructions follow the theme text color, and Cancel uses the
   plugin localization key. Successful Open operations show no completion dialog.
+- The English resources include `LOCPlayAch_Button_Cancel` = `Cancel`; check
+  Open, Copy, and Delete selection dialogs for a translated label rather than
+  an unresolved resource-key placeholder (2026-10-20 bundle refresh).
+- English resources also preserve Clear, Configure, OK, Reset, Save, Search,
+  and the Providers header/tooltip. Check the Local Overrides clear buttons,
+  Custom Schema save/clear buttons, import dialog OK, and notification controls
+  for visible labels. All 22 referenced button keys and XAML button content/tooltip
+  localization references passed the resource audit; live rendering remains pending.
 - Verify these dialogs in Playnite, including cancellation, copying active logs,
   and log recreation after deletion. The Release rebuild passed.
 
@@ -151,8 +180,33 @@ Primary fork areas:
 
 ## Local provider and game overrides
 
+- Custom folders and Local folder/file overrides accept {InstallDir}, {GameDirName},
+  {PlayniteDir}, {EmulatorDir}, {SteamAppId}, {GameName}, {ExecutableDir}, {RomDir},
+  and {GameId}, plus environment variables. Expansion is case-insensitive and per
+  game; unavailable values skip the path. GameName replaces invalid filename characters.
+- Override templates remain editable as templates and resolve for reads and monitoring.
+  SteamAppId uses the Local App ID resolver, including overrides. ExecutableDir uses
+  the first file-based Play action; RomDir uses the first configured ROM.
+- Variable buttons in Custom folders and Local Overrides insert at the cursor or
+  replace selected text, move the caret after the token, and show description tooltips.
+- Automatic folders and variables have matching reference tables with descriptions,
+  equal widths, aligned headers, wrapped cells, and matching height limits.
+- The 13 folder-template tests, Release rebuild, layout checks, and compiled WPF
+  cursor insertion/replacement checks passed; verify the final tables in Playnite.
 - Local appears with its default icon and settings defaults.
 - Local folder discovery, extra/excluded paths, import, and refresh work.
+- Applying a local folder override retains the game's installation folder in the
+  multiple-folder dropdown alongside shared save and Steam cache folders.
+- Nested steam_settings folders beneath the installation directory are detected,
+  including their settings/stats subfolders; multiple matching locations appear in
+  the dropdown. Excluded paths and directory links are skipped by the nested search.
+- Folder dropdown entries and source path displays use on-disk casing and uppercase
+  drive letters, regardless of the casing supplied by Steam or Playnite.
+- The Automatic folders display includes each game's installation root and supported
+  subfolders, Documents OnlineFix, ProgramData Steam, and Steam installation roots.
+  It also explains nested steam_settings discovery with a Bin\x64 example.
+- Custom-folder and excluded-folder Remove buttons display their label using
+  `LOCPlayAch_Button_Remove` and enable when a folder is selected.
 - While a game is running and its Local achievement file has not been found,
   folder discovery bypasses cached misses and rescans all configured roots for
   the supported JSON/INI filenames. The user-configured 1–300 second interval
@@ -197,9 +251,12 @@ Primary fork areas:
   game previously had a forced or preferred provider route; the wizard proceeds
   to editing instead of returning to the Exophase search results.
 - Local right-click commands and Manage Achievements shortcuts are present.
-- View Achievements shows `Edit Local Achievements` only when the game resolves
-  through the Local provider and has a writable `achievements.json` or
-  `achievements.ini`.
+- View Achievements routes `Edit Achievements` to the upstream editor and
+  `Edit Local Achievements` to the local-file editor. The local action appears
+  for Local-provider games or when a writable local file is detected.
+- Opening the local editor refreshes folder discovery before resolving the file;
+  a missing or unsupported file produces an editor message rather than hiding
+  the action for Local-provider games.
 - The Local achievement editor opens with the current v3 achievement cell
   resources and can save unlock state and unlock times back to the Local file.
 - Opening Playnite's manual-game editor does not refresh the temporary
@@ -247,6 +304,9 @@ Primary fork areas:
 
 ## Theme and StartPage migration
 
+- Display and Themes migration pages retain the upstream v4.1.1 layout and the
+  two-way Revert selection fix. Fork-specific migration controls remain available
+  in the separate Theme Migration tab on the main settings page.
 - The fork Theme Migration page remains separate from upstream's migration
   pages.
 - The newest unlocked achievement is highlighted above the compact/scrollable
@@ -289,6 +349,15 @@ Primary fork areas:
   `PlayniteAchievements` panel/toggle names and their references, while migrating
   plugin bindings and custom-control prefixes. Restore the migration backup
   before migrating themes whose names were merged by the old migration.
+- Migration preserves theme resource keys and StaticResource/DynamicResource
+  references, including references in separate XAML files. Solaris must retain
+  both `SuccessStoryIcon` and `PlayniteAchievementsIcon` without duplicate keys.
+  Restore the original backup before migrating a previously damaged theme.
+- The Revert button has an English label. Its dropdown updates the selected
+  path in both settings pages. The detached Theme Migration page retains the
+  original control's name scope so its bindings and click handlers use the same
+  theme. Release rebuild and a WPF rehosting binding check passed; verify the
+  complete Revert action in Playnite against a theme with a backup.
 - PS5 Experience Limited migration marks the PS5Core trophy list with
   `Uid="PlayAch.Ps5TrophyProgress"`. The fork's runtime adapter corrects Local
   rows from their unlocked trophy counts and refreshes percentage, counter,
@@ -335,6 +404,14 @@ Primary fork areas:
 
 ## Steam and imports
 
+- Santodan-Fork > Platforms contains Local and Steam Secondary; the main Platforms
+  tab retains the original Steam settings. Local navigation links open the fork page.
+- Local General, Import, and SuccessStory headers have settings, download, and trophy
+  icons. Steam Secondary has an accounts icon and shares the Steam settings edit
+  session with the original page.
+- Steam Secondary presents import as a full-width section below Active account,
+  using the same heading style. Verify account editing, imports, and Save/Cancel
+  after switching between the original and fork platform pages.
 - Steam browser authentication and Web API-key accounts both work.
 - With a non-English achievement language selected, refreshing a Steam game
   obtains localized hidden-achievement titles and descriptions from Steam's

@@ -1,3 +1,4 @@
+using ForkLog = PlayniteAchievements.Services.Logging.ForkLogger;
 using System;
 using System.Globalization;
 using System.Collections.Specialized;
@@ -41,13 +42,13 @@ namespace PlayniteAchievements.Services.ThemeMigration
                     .Select(root => System.IO.Path.Combine(root, "Themes", "Fullscreen", theme, "Views", "Main.xaml"))
                     .Any(path => File.Exists(path) && File.ReadAllText(path).Contains(Marker));
                 if (!_enableNamedList) return;
-                _logger?.Info("[PS5Progress] Migrated theme detected; watching live trophy windows.");
+                ForkLog.Wrap(_logger)?.Info("[PS5Progress] Migrated theme detected; watching live trophy windows.");
                 _discoveryTimer = new DispatcherTimer(DispatcherPriority.Background, Application.Current.Dispatcher) { Interval = TimeSpan.FromSeconds(1) };
                 _discoveryTimer.Tick += DiscoverWindows;
                 _discoveryTimer.Start();
                 DiscoverWindows(null, EventArgs.Empty);
             }
-            catch (Exception ex) { _logger?.Error(ex, "[PS5Progress] Failed to start trophy compatibility adapter."); }
+            catch (Exception ex) { ForkLog.Wrap(_logger)?.Error(ex, "[PS5Progress] Failed to start trophy compatibility adapter."); }
         }
 
         internal static void Stop()
@@ -72,6 +73,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
 
         private static void Discover(DependencyObject node)
         {
+            if (_enableNamedList && node is Image completionImage) AdaptCompletionIcon(completionImage);
             if (_enableNamedList && (node is TextBlock || node is Rectangle)) AdaptDetailHeader((FrameworkElement)node);
             if (node is ListBox list && IsMigrated(list))
             {
@@ -80,6 +82,38 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 return;
             }
             for (var i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Discover(VisualTreeHelper.GetChild(node, i));
+        }
+
+        private static void AdaptCompletionIcon(Image image)
+        {
+            if (BindingOperations.GetMultiBinding(image, UIElement.VisibilityProperty)?.Converter is CompletionIconConverter)
+            {
+                BindingOperations.GetMultiBindingExpression(image, UIElement.VisibilityProperty)?.UpdateTarget();
+                return;
+            }
+            if (image.ReadLocalValue(UIElement.VisibilityProperty) != DependencyProperty.UnsetValue || image.Style == null) return;
+            var paths = image.Style.Triggers.OfType<DataTrigger>().Select(trigger => (trigger.Binding as Binding)?.Path?.Path).ToList();
+            var prefix = new[] { "", "AchievementsViewModel.SelectedGame.", "OverlayTrophyGame." }
+                .FirstOrDefault(candidate => paths.Contains(candidate + "HasPlatinum") && paths.Contains(candidate + "HasCapstoneUnlocked"));
+            if (prefix == null) return;
+            var binding = new MultiBinding { Mode = BindingMode.OneWay, Converter = new CompletionIconConverter() };
+            foreach (var path in new[] { "HasPlatinum", "HasCapstoneUnlocked", "PlatinumCount", "GoldCount", "SilverCount", "BronzeCount", "Total" })
+                binding.Bindings.Add(new Binding(prefix + path) { Mode = BindingMode.OneWay });
+            BindingOperations.SetBinding(image, UIElement.VisibilityProperty, binding);
+        }
+
+        private sealed class CompletionIconConverter : IMultiValueConverter
+        {
+            public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+            {
+                if (values.Length != 7) return DependencyProperty.UnsetValue;
+                if (Equals(values[0], true) || Equals(values[1], true)) return Visibility.Visible;
+                if (values.Skip(2).Any(value => value == DependencyProperty.UnsetValue)) return Visibility.Collapsed;
+                var total = System.Convert.ToInt32(values[6], culture);
+                var unlocked = values.Skip(2).Take(4).Sum(value => Math.Max(0, System.Convert.ToInt32(value, culture)));
+                return total > 0 && unlocked >= total ? Visibility.Visible : Visibility.Collapsed;
+            }
+            public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) => throw new NotSupportedException();
         }
 
         private static void AdaptDetailHeader(FrameworkElement control)
@@ -106,7 +140,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 binding.Bindings.Add(new Binding(prefix + "." + field) { Mode = BindingMode.OneWay });
             binding.Bindings.Add(new Binding(path) { Mode = BindingMode.OneWay });
             BindingOperations.SetBinding(control, property, binding);
-            _logger?.Debug($"[PS5Progress] Connected game-detail header binding: {path}.");
+            ForkLog.Wrap(_logger)?.Debug($"[PS5Progress] Connected game-detail header binding: {path}.");
         }
 
         private static void SynchronizeDetailStates(object context)
@@ -122,11 +156,12 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 if (Guid.TryParse(idValue?.ToString(), out var gameId))
                     Ps5AchievementStateSynchronizer.Synchronize(vm, _achievementDataResolver(gameId), _logger);
             }
-            catch (Exception ex) { _logger?.Error(ex, "[PS5Progress] Failed to synchronize selected-game achievement states."); }
+            catch (Exception ex) { ForkLog.Wrap(_logger)?.Error(ex, "[PS5Progress] Failed to synchronize selected-game achievement states."); }
         }
 
         private static void RefreshVisuals(DependencyObject node)
         {
+            if (node is Image completionImage) AdaptCompletionIcon(completionImage);
             if (node is TextBlock || node is Rectangle)
             {
                 var control = (FrameworkElement)node;
@@ -154,7 +189,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
             var connection = new RowConnection(list);
             list.SetValue(ConnectionProperty, connection);
             connection.Connect();
-            _logger?.Info($"[PS5Progress] Connected trophy list: name='{list.Name}', uid='{list.Uid}', rows={list.Items.Count}.");
+            ForkLog.Wrap(_logger)?.Info($"[PS5Progress] Connected trophy list: name='{list.Name}', uid='{list.Uid}', rows={list.Items.Count}.");
         }
 
         private static bool IsMigrated(ListBox list) => Equals(list.Tag, Marker) || list.Uid == Marker ||
@@ -201,7 +236,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
                         observable.PropertyChanged += OnRowChanged;
                     }
                 }
-                _logger?.Debug($"[PS5Progress] Trophy rows refreshed: rows={_list.Items.Count}; " +
+                ForkLog.Wrap(_logger)?.Debug($"[PS5Progress] Trophy rows refreshed: rows={_list.Items.Count}; " +
                     string.Join("; ", _list.Items.Cast<object>().Take(3).Select(row =>
                         row.GetType().FullName + " provider=" + row.GetType().GetProperty("Provider")?.GetValue(row))));
             }
@@ -227,7 +262,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 try
                 {
                     unlockedProperty.SetValue(row, unlocked);
-                    _logger?.Info($"[PS5Progress] Corrected trophy progress: game='{type.GetProperty("GameName")?.GetValue(row)}', provider='{provider ?? "<missing>"}', unlocked={unlocked}, total={total}.");
+                    ForkLog.Wrap(_logger)?.Info($"[PS5Progress] Corrected trophy progress: game='{type.GetProperty("GameName")?.GetValue(row)}', provider='{provider ?? "<missing>"}', unlocked={unlocked}, total={total}.");
                 }
                 finally { _updating = false; }
             }

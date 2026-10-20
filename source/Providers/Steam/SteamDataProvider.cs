@@ -1,3 +1,4 @@
+using ForkLog = PlayniteAchievements.Services.Logging.ForkLogger;
 using PlayniteAchievements.Models;
 using PlayniteAchievements.Models.Achievements;
 using PlayniteAchievements.Models.Friends;
@@ -20,7 +21,7 @@ using Playnite.SDK.Models;
 
 namespace PlayniteAchievements.Providers.Steam
 {
-    internal sealed class SteamDataProvider : DataProviderBase<SteamSettings>, IDataProvider, IProfileLinkProvider, IAchievementPageLinkProvider, IProviderOverride, IRefreshAuthContextReceiver, IInGameProgressSource, IOfflineRefreshFallbackProvider, IDisposable
+    internal sealed class SteamDataProvider : DataProviderBase<SteamSettings>, IDataProvider, IProfileLinkProvider, IAchievementPageLinkProvider, IProviderOverride, IRefreshAuthContextReceiver, IInGameProgressSource, IOfflineRefreshFallbackProvider, IDefinitionCachePreferenceProvider, IDisposable
     {
         /// <summary>
         /// Resolved once at game start so the fast prong never repeats path discovery. Steam's remote
@@ -47,8 +48,7 @@ namespace PlayniteAchievements.Providers.Steam
                     return ProviderOverrideValidation.Valid(appId.ToString(CultureInfo.InvariantCulture));
                 }
 
-                return ProviderOverrideValidation.Invalid(
-                    "LOCPlayAch_Menu_SteamAppId_InvalidId");
+                return ProviderOverrideValidation.InvalidId("440");
             });
 
         private readonly SteamHttpClient _steamClient;
@@ -90,13 +90,16 @@ namespace PlayniteAchievements.Providers.Steam
             var steamHuntersApiClient = new SteamHuntersApiClient(
                 (url, ct) => _sessionManager.OffscreenViews.GetPageTextAsync(url, ct),
                 logger);
+            var categoryArtDownloader = new SteamCategoryArtDownloader(
+                () => PlayniteAchievementsPlugin.Instance?.DiskImageService,
+                logger);
             _steamHuntersCategoryEnricher = new SteamHuntersCategoryEnricher(
                 steamHuntersApiClient,
                 logger,
-                () => PlayniteAchievementsPlugin.Instance?.DiskImageService);
+                categoryArtDownloader);
             _tokenResolver = new SteamWebApiTokenResolver(_sessionManager, logger);
             _sessionManager.SetClearInMemoryAuthState(_steamClient.ClearInMemoryAuthState);
-            _scanner = new SteamScanner(settings, _steamClient, steamApiClient, _tokenResolver, _steamHuntersCategoryEnricher, api, logger);
+            _scanner = new SteamScanner(settings, _steamClient, steamApiClient, _tokenResolver, _steamHuntersCategoryEnricher, api, logger, categoryArtDownloader: categoryArtDownloader);
             _friendsProvider = new SteamFriendsProvider(_steamClient, steamApiClient, _scanner, _tokenResolver, _steamHuntersCategoryEnricher, _sessionManager, logger);
             if (steamApiTokenService != null)
             {
@@ -243,7 +246,7 @@ namespace PlayniteAchievements.Providers.Steam
 
             store.Update(gameId, data => data.SteamAccountIdOverride = steamAccountId.Trim());
             persistSettingsForUi?.Invoke();
-            logger?.Info($"Set Steam account override for '{gameName}'.");
+            ForkLog.Wrap(logger)?.Info($"Set Steam account override for '{gameName}'.");
             return true;
         }
 
@@ -263,7 +266,7 @@ namespace PlayniteAchievements.Providers.Steam
 
             store.Update(gameId, data => data.SteamAccountIdOverride = null);
             persistSettingsForUi?.Invoke();
-            logger?.Info($"Cleared Steam account override for '{gameName}'.");
+            ForkLog.Wrap(logger)?.Info($"Cleared Steam account override for '{gameName}'.");
             return true;
         }
 
@@ -277,15 +280,29 @@ namespace PlayniteAchievements.Providers.Steam
                    id > 0;
         }
 
-        public async Task<RebuildPayload> RefreshAsync(
+        public Task<RebuildPayload> RefreshAsync(
             IReadOnlyList<Game> gamesToRefresh,
             Action<Game> onGameStarting,
             Func<Game, GameAchievementData, Task> onGameCompleted,
             CancellationToken cancel)
         {
+            return RefreshAsync(gamesToRefresh, onGameStarting, onGameCompleted, false, cancel);
+        }
+
+        // Cached definitions skip SteamHunters: its categories are stored with the game and do not
+        // change between the in-game monitor's frequent refreshes.
+        public async Task<RebuildPayload> RefreshAsync(
+            IReadOnlyList<Game> gamesToRefresh,
+            Action<Game> onGameStarting,
+            Func<Game, GameAchievementData, Task> onGameCompleted,
+            bool preferCachedDefinitions,
+            CancellationToken cancel)
+        {
             using (_sessionManager.BeginOffscreenViewLease())
             {
-                return await _scanner.RefreshAsync(gamesToRefresh, onGameStarting, onGameCompleted, cancel).ConfigureAwait(false);
+                return await _scanner
+                    .RefreshAsync(gamesToRefresh, onGameStarting, onGameCompleted, cancel, preferCachedDefinitions)
+                    .ConfigureAwait(false);
             }
         }
 

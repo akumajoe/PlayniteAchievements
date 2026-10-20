@@ -1,3 +1,4 @@
+using ForkLog = PlayniteAchievements.Services.Logging.ForkLogger;
 using PlayniteAchievements.Common;
 using PlayniteAchievements.Models;
 using PlayniteAchievements.Models.Settings;
@@ -1649,7 +1650,7 @@ namespace PlayniteAchievements.Services.ThemeIntegration
                 }
 
                 _logger?.Info($"PopulateAllGamesDataSync: State created - TotalTrophies={state.TotalTrophies}, PlatinumTrophies={state.PlatinumTrophies}, GoldTrophies={state.GoldTrophies}, Rank={state.Rank}");
-                _logger?.Debug(
+                ForkLog.Wrap(_logger)?.Debug(
                     "PopulateAllGamesDataSync: Providers=" +
                     string.Join(
                         ", ",
@@ -1959,6 +1960,13 @@ namespace PlayniteAchievements.Services.ThemeIntegration
             _settings.ModernTheme.PrestigeRank = library.PrestigeRank;
             _settings.ModernTheme.CollectorMastery = library.CollectorMastery;
             _settings.ModernTheme.PrestigeMastery = library.PrestigeMastery;
+            _settings.ModernTheme.GamerscoreScore = library.GamerscoreScore;
+            _settings.ModernTheme.GamerscoreTotal = library.GamerscoreTotal;
+            _settings.ModernTheme.EpicXpScore = library.EpicXpScore;
+            _settings.ModernTheme.EpicXpTotal = library.EpicXpTotal;
+            _settings.ModernTheme.RetroPointsScore = library.RetroPointsScore;
+            _settings.ModernTheme.RetroPointsTotal = library.RetroPointsTotal;
+            _settings.ModernTheme.PointsScores = library.PointsScores;
             _settings.ModernTheme.SteamGames = ProjectGameSummaries(library.SteamGames);
             _settings.ModernTheme.GOGGames = ProjectGameSummaries(library.GOGGames);
             _settings.ModernTheme.EpicGames = ProjectGameSummaries(library.EpicGames);
@@ -2081,7 +2089,7 @@ namespace PlayniteAchievements.Services.ThemeIntegration
             }
             catch (Exception ex)
             {
-                _logger?.Debug(ex, "Failed to persist all-games score snapshot.");
+                ForkLog.Wrap(_logger)?.Debug(ex, "Failed to persist all-games score snapshot.");
             }
         }
 
@@ -4620,7 +4628,7 @@ namespace PlayniteAchievements.Services.ThemeIntegration
                 item => item != null && AchievementCategoryTypeHelper.ParseValues(item.CategoryType)
                     .Contains(key, StringComparer.OrdinalIgnoreCase);
 
-            return new Dictionary<string, Func<FriendAchievementDisplayItem, bool>>(StringComparer.Ordinal)
+            var predicates = new Dictionary<string, Func<FriendAchievementDisplayItem, bool>>(StringComparer.Ordinal)
             {
                 [DynamicThemeViewKeys.Unlocked] = item => item?.Unlocked == true,
                 [DynamicThemeViewKeys.Locked] = item => item != null && !item.Unlocked,
@@ -4637,19 +4645,19 @@ namespace PlayniteAchievements.Services.ThemeIntegration
                 [DynamicThemeViewKeys.Gold] = Trophy(DynamicThemeViewKeys.Gold),
                 [DynamicThemeViewKeys.Silver] = Trophy(DynamicThemeViewKeys.Silver),
                 [DynamicThemeViewKeys.Bronze] = Trophy(DynamicThemeViewKeys.Bronze),
-                ["Base"] = CategoryType("Base"),
-                ["DLC"] = CategoryType("DLC"),
-                ["Singleplayer"] = CategoryType("Singleplayer"),
-                ["Multiplayer"] = CategoryType("Multiplayer"),
-                ["Progression"] = CategoryType("Progression"),
-                ["WinCondition"] = CategoryType("WinCondition"),
-                ["Collectable"] = CategoryType("Collectable"),
-                ["Missable"] = CategoryType("Missable"),
-                [AchievementCategoryTypeHelper.UnobtainableCategoryType] = CategoryType(AchievementCategoryTypeHelper.UnobtainableCategoryType),                ["Difficulty"] = CategoryType("Difficulty"),
-                ["Stackable"] = CategoryType("Stackable"),
-                [AchievementCategoryTypeHelper.SoftcoreCategoryType] = CategoryType(AchievementCategoryTypeHelper.SoftcoreCategoryType),
-                [AchievementCategoryTypeHelper.HardcoreCategoryType] = CategoryType(AchievementCategoryTypeHelper.HardcoreCategoryType),
             };
+
+            // One entry per category type, from the same vocabulary as the type menus.
+            foreach (var categoryType in DynamicThemeOptionGroups.AchievementCategoryTypeFilterKeys
+                .Where(key => !string.Equals(key, DynamicThemeViewKeys.All, StringComparison.Ordinal)))
+            {
+                predicates[categoryType] = CategoryType(categoryType);
+            }
+
+            // The key Side Quest shipped under, for themes that still name it.
+            predicates["SideProgression"] = CategoryType("SideQuest");
+
+            return predicates;
         }
 
         private delegate IOrderedEnumerable<T> DynamicSortPrimary<T>(IEnumerable<T> source, bool descending, StringComparer nameComparer);

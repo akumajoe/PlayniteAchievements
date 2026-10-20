@@ -1,3 +1,4 @@
+using ForkLog = PlayniteAchievements.Services.Logging.ForkLogger;
 using System;
 using System.Diagnostics;
 using System.Drawing;
@@ -159,7 +160,7 @@ namespace PlayniteAchievements.Services.UI
             }
             catch (Exception ex)
             {
-                _logger?.Debug(ex, "Custom unlock screenshot capture failed.");
+                ForkLog.Wrap(_logger)?.Debug(ex, "Custom unlock screenshot capture failed.");
                 return null;
             }
         }
@@ -186,11 +187,11 @@ namespace PlayniteAchievements.Services.UI
                     settings, game, providerKey, achievementName, number, total,
                     variantSuffix, isTestFire);
                 bitmap.Save(path, ImageFormat.Png);
-                _logger?.Info($"[Screenshot] Saved custom unlock screenshot: {path}");
+                ForkLog.Wrap(_logger)?.Info($"[Screenshot] Saved custom unlock screenshot: {path}");
             }
             catch (Exception ex)
             {
-                _logger?.Debug(ex, "Custom unlock screenshot save failed.");
+                ForkLog.Wrap(_logger)?.Debug(ex, "Custom unlock screenshot save failed.");
             }
         }
 
@@ -221,11 +222,11 @@ namespace PlayniteAchievements.Services.UI
                 {
                     encoder.Save(stream);
                 }
-                _logger?.Info($"[Screenshot] Saved custom unlock screenshot: {path}");
+                ForkLog.Wrap(_logger)?.Info($"[Screenshot] Saved custom unlock screenshot: {path}");
             }
             catch (Exception ex)
             {
-                _logger?.Debug(ex, "Custom unlock screenshot save failed.");
+                ForkLog.Wrap(_logger)?.Debug(ex, "Custom unlock screenshot save failed.");
             }
         }
 
@@ -406,7 +407,8 @@ namespace PlayniteAchievements.Services.UI
             string achievementName,
             int number,
             int total,
-            string variantSuffix = null)
+            string variantSuffix = null,
+            string gameDirectory = null)
         {
             if (bitmap == null)
             {
@@ -415,7 +417,7 @@ namespace PlayniteAchievements.Services.UI
 
             SaveCore(
                 path => bitmap.Save(path, ImageFormat.Png),
-                baseDir, providerKey, gameName, achievementName, number, total, variantSuffix);
+                baseDir, providerKey, gameName, achievementName, number, total, variantSuffix, gameDirectory);
         }
 
         /// <summary>
@@ -430,7 +432,8 @@ namespace PlayniteAchievements.Services.UI
             string achievementName,
             int number,
             int total,
-            string variantSuffix = null)
+            string variantSuffix = null,
+            string gameDirectory = null)
         {
             if (source == null)
             {
@@ -447,7 +450,7 @@ namespace PlayniteAchievements.Services.UI
                         encoder.Save(stream);
                     }
                 },
-                baseDir, providerKey, gameName, achievementName, number, total, variantSuffix);
+                baseDir, providerKey, gameName, achievementName, number, total, variantSuffix, gameDirectory);
         }
 
         private void SaveCore(
@@ -458,9 +461,10 @@ namespace PlayniteAchievements.Services.UI
             string achievementName,
             int number,
             int total,
-            string variantSuffix)
+            string variantSuffix,
+            string gameDirectory)
         {
-            if (string.IsNullOrWhiteSpace(baseDir))
+            if (string.IsNullOrWhiteSpace(baseDir) && string.IsNullOrWhiteSpace(gameDirectory))
             {
                 return;
             }
@@ -468,11 +472,11 @@ namespace PlayniteAchievements.Services.UI
             try
             {
                 var relative = BuildRelativePath(providerKey, gameName, achievementName, number, total, variantSuffix);
-                var folder = Path.Combine(baseDir, relative.Folder);
+                var folder = ResolveTargetFolder(baseDir, gameDirectory, relative.Folder);
                 Directory.CreateDirectory(folder);
                 var path = EnsureUniquePath(Path.Combine(folder, relative.FileName));
                 writeToPath(path);
-                _logger?.Info($"[Screenshot] Saved unlock screenshot: {path}");
+                ForkLog.Wrap(_logger)?.Info($"[Screenshot] Saved unlock screenshot: {path}");
             }
             catch (Exception ex)
             {
@@ -507,6 +511,17 @@ namespace PlayniteAchievements.Services.UI
                 ? string.Empty
                 : $"_{AchievementIconCachePathBuilder.SanitizeSegment(variantSuffix)}";
             return (game, $"{prefix}_{name}{suffix}{extension}");
+        }
+
+        /// <summary>
+        /// The folder a capture is written to: the game's own capture folder as is when it has
+        /// one, else the game subfolder under the base directory.
+        /// </summary>
+        public static string ResolveTargetFolder(string baseDir, string gameDirectory, string relativeFolder)
+        {
+            return string.IsNullOrWhiteSpace(gameDirectory)
+                ? Path.Combine(baseDir, relativeFolder)
+                : gameDirectory.Trim();
         }
 
         internal static string SanitizeCaptureGameName(string gameName)

@@ -1,3 +1,4 @@
+using ForkLog = PlayniteAchievements.Services.Logging.ForkLogger;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -112,7 +113,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 var hasExistingBackup = Directory.Exists(backupPath);
                 if (hasExistingBackup)
                 {
-                    _logger.Info($"Backup already exists at: {backupPath}. Reusing existing backup for re-migration.");
+                    ForkLog.Wrap(_logger).Info($"Backup already exists at: {backupPath}. Reusing existing backup for re-migration.");
                 }
 
                 var result = await Task.Run(() =>
@@ -127,7 +128,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
 
                 if (result.FilesProcessed == 0)
                 {
-                    _logger.Info($"No files needed migration changes for: {themePath}");
+                    ForkLog.Wrap(_logger).Info($"No files needed migration changes for: {themePath}");
 
                     // Even if no changes were required, cache the theme version so we can detect upgrades later.
                     TryUpdateThemeMigrationVersionCache(themePath);
@@ -296,7 +297,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 if (!hasExistingBackup)
                 {
                     BackupFile(file, themePath, backupPath, backedUpFiles);
-                    _logger.Info($"Backing up file with {replacementCount} references: {GetRelativePath(file.FullName, themePath)}");
+                    ForkLog.Wrap(_logger).Info($"Backing up file with {replacementCount} references: {GetRelativePath(file.FullName, themePath)}");
                 }
 
                 // Apply replacements
@@ -319,11 +320,11 @@ namespace PlayniteAchievements.Services.ThemeMigration
             }
             else if (!hasExistingBackup)
             {
-                _logger.Info("No files contained references requiring migration - no backup created");
+                ForkLog.Wrap(_logger).Info("No files contained references requiring migration - no backup created");
             }
             else
             {
-                _logger.Info("Re-migration used existing backup folder; no new backup snapshot was created.");
+                ForkLog.Wrap(_logger).Info("Re-migration used existing backup folder; no new backup snapshot was created.");
             }
 
             _logger.Info($"Migration complete: {filesProcessed} files modified, {filesSkipped} files skipped, {replacementsMade} text replacements, {controlReplacementsMade} control replacements, {bindingReplacementsMade} binding replacements");
@@ -364,7 +365,7 @@ namespace PlayniteAchievements.Services.ThemeMigration
                 if (!File.Exists(newPath))
                 {
                     File.Copy(file.FullName, newPath);
-                    _logger.Info($"Created renamed copy for migrated reference: {newName} (from {file.Name})");
+                    ForkLog.Wrap(_logger).Info($"Created renamed copy for migrated reference: {newName} (from {file.Name})");
                 }
             }
         }
@@ -642,20 +643,23 @@ namespace PlayniteAchievements.Services.ThemeMigration
             // Keep references to those names intact as well. Registered custom controls
             // still need their source prefix migrated so Playnite can instantiate them.
             var names = Regex.Matches(content,
-                @"(?<![\w:])(?:x:Name|Name|(?:Storyboard\.)?TargetName|ElementName)\s*=\s*(?:""(?<name>[^""]*)""|'(?<name>[^']*)'|(?<name>[\w]+))");
+                @"(?<![\w:])(?:(?:x:Name|Name|(?:Storyboard\.)?TargetName|ElementName)\s*=\s*(?:""(?<name>[^""]*)""|'(?<name>[^']*)'|(?<name>[\w]+))|x:Key\s*=\s*(?:""(?<key>[^""]*)""|'(?<key>[^']*)')|\{(?:StaticResource|DynamicResource)\s+(?:ResourceKey\s*=\s*)?(?:'(?<key>[^']*)'|""(?<key>[^""]*)""|(?<key>[^}\s]+)))");
             var protectedNames = new Dictionary<string, string>();
             var marker = "__ThemeName_" + Guid.NewGuid().ToString("N") + "_";
             var result = new StringBuilder();
             int position = 0;
             foreach (Match match in names)
             {
-                var name = match.Groups["name"];
+                // Resource keys are theme-owned even when they resemble custom control names.
+                // Protect resource lookups too, including lookups in other XAML files.
+                var name = match.Groups["key"].Success ? match.Groups["key"] : match.Groups["name"];
                 if (!name.Value.Contains("SuccessStory") && !name.Value.Contains("SSHelper"))
                 {
                     continue;
                 }
-                if (name.Value.StartsWith("SuccessStory_", StringComparison.Ordinal) ||
-                    name.Value.StartsWith("SSHelper_", StringComparison.Ordinal))
+                if (!match.Groups["key"].Success &&
+                    (name.Value.StartsWith("SuccessStory_", StringComparison.Ordinal) ||
+                    name.Value.StartsWith("SSHelper_", StringComparison.Ordinal)))
                 {
                     continue;
                 }

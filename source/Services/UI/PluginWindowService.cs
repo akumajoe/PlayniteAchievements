@@ -1,3 +1,4 @@
+using ForkLog = PlayniteAchievements.Services.Logging.ForkLogger;
 using System;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -778,18 +779,30 @@ namespace PlayniteAchievements.Services.UI
             }
         }
 
-        public void OpenOverviewWindow()
+        /// <summary>
+        /// Opens the Overview window, or brings the open one forward. With
+        /// <paramref name="showcasePageId"/> it shows the Showcase on that page.
+        /// </summary>
+        public void OpenOverviewWindow(string showcasePageId = null)
         {
             try
             {
                 InvokeOnUiThread(() =>
                 {
+                    var open = FindOpenOverviewWindow();
+                    if (open != null
+                        && !string.IsNullOrWhiteSpace(showcasePageId)
+                        && TryGetWindowContent<OverviewControl>(open, out var openView))
+                    {
+                        openView.ShowShowcasePage(showcasePageId);
+                    }
+
                     if (TryActivateOverviewWindow(closeIfActive: false))
                     {
                         return;
                     }
 
-                    OpenOverviewWindowCore();
+                    OpenOverviewWindowCore(showcasePageId);
                 });
             }
             catch (Exception ex)
@@ -973,29 +986,61 @@ namespace PlayniteAchievements.Services.UI
 
         private static bool IsOverviewWindow(Window window)
         {
-            return ContainsOverviewControl(window?.Content);
+            return HostsControl<OverviewControl>(window?.Content);
         }
 
-        private static bool ContainsOverviewControl(object content)
+        /// <summary>
+        /// For hotkeys: brings the open plugin window that hosts a <typeparamref name="T"/> to the
+        /// front, or closes it when it is already the active window. False when none is open.
+        /// Runs on the UI thread.
+        /// </summary>
+        public bool TryToggleOpenWindowHosting<T>() where T : class
+        {
+            var application = Application.Current;
+            var window = application?.Windows?
+                .OfType<Window>()
+                .FirstOrDefault(candidate => candidate != null
+                                             && candidate.IsVisible
+                                             && !ReferenceEquals(candidate, application.MainWindow)
+                                             && HostsControl<T>(candidate.Content));
+            if (window == null)
+            {
+                return false;
+            }
+
+            if (window.IsActive)
+            {
+                window.Close();
+            }
+            else
+            {
+                ActivateTrackedWindow(window);
+            }
+
+            return true;
+        }
+
+        /// <summary>Whether a window's content is, or directly wraps, a <typeparamref name="T"/>.</summary>
+        private static bool HostsControl<T>(object content) where T : class
         {
             if (content == null)
             {
                 return false;
             }
 
-            if (content is OverviewControl)
+            if (content is T)
             {
                 return true;
             }
 
             if (content is FullscreenOverlayContainer overlay)
             {
-                return ContainsOverviewControl(overlay.HostedContent);
+                return HostsControl<T>(overlay.HostedContent);
             }
 
             if (content is ContentControl contentControl)
             {
-                return ContainsOverviewControl(contentControl.Content);
+                return HostsControl<T>(contentControl.Content);
             }
 
             return false;
@@ -1055,7 +1100,8 @@ namespace PlayniteAchievements.Services.UI
         private bool TryActivateManageAchievementsWindow(
             Guid gameId,
             ManageAchievementsTab tab,
-            bool selectManageCategoriesSubTab = false)
+            bool selectManageCategoriesSubTab = false,
+            NotificationSurface? notificationsSurface = null)
         {
             if (!TryGetTrackedWindow(AchievementWindowKind.ManageAchievements, gameId, out var window))
             {
@@ -1064,7 +1110,7 @@ namespace PlayniteAchievements.Services.UI
 
             if (TryGetWindowContent<ManageAchievementsControl>(window, out var control))
             {
-                control.SelectTab(tab, selectManageCategoriesSubTab);
+                control.SelectTab(tab, selectManageCategoriesSubTab, notificationsSurface);
             }
 
             ActivateTrackedWindow(window);
@@ -1283,7 +1329,7 @@ namespace PlayniteAchievements.Services.UI
             }
         }
 
-        private void OpenOverviewWindowCore()
+        private void OpenOverviewWindowCore(string showcasePageId = null)
         {
             try
             {
@@ -1304,6 +1350,10 @@ namespace PlayniteAchievements.Services.UI
                     OverviewLaunchContext.Popout,
                     _friendsOverviewDataCoordinator,
                     _widgetCoordinatorAccessor);
+                if (!string.IsNullOrWhiteSpace(showcasePageId))
+                {
+                    view.ShowShowcasePage(showcasePageId);
+                }
 
                 var windowOptions = new WindowOptions
                 {
@@ -1626,14 +1676,16 @@ namespace PlayniteAchievements.Services.UI
         public void OpenManageAchievementsView(
             Guid gameId,
             ManageAchievementsTab initialTab,
-            bool selectManageCategoriesSubTab = false)
+            bool selectManageCategoriesSubTab = false,
+            NotificationSurface? notificationsSurface = null)
         {
             try
             {
                 InvokeOnUiThread(() => OpenManageAchievementsViewCore(
                     gameId,
                     initialTab,
-                    selectManageCategoriesSubTab));
+                    selectManageCategoriesSubTab,
+                    notificationsSurface));
             }
             catch (Exception ex)
             {
@@ -1647,12 +1699,14 @@ namespace PlayniteAchievements.Services.UI
         private void OpenManageAchievementsViewCore(
             Guid gameId,
             ManageAchievementsTab initialTab,
-            bool selectManageCategoriesSubTab = false)
+            bool selectManageCategoriesSubTab = false,
+            NotificationSurface? notificationsSurface = null)
         {
             if (TryActivateManageAchievementsWindow(
                 gameId,
                 initialTab,
-                selectManageCategoriesSubTab))
+                selectManageCategoriesSubTab,
+                notificationsSurface))
             {
                 return;
             }
@@ -1696,7 +1750,8 @@ namespace PlayniteAchievements.Services.UI
                         _logger,
                         _settings,
                         _manualSourceRegistry,
-                        selectManageCategoriesSubTab);
+                        selectManageCategoriesSubTab,
+                        notificationsSurface);
                 }
 
                 var windowOptions = new WindowOptions
@@ -1755,7 +1810,7 @@ namespace PlayniteAchievements.Services.UI
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, $"Failed to open local achievements editor for gameId={gameId}");
+                ForkLog.Wrap(_logger).Error(ex, $"Failed to open local achievements editor for gameId={gameId}");
                 _api?.Dialogs?.ShowErrorMessage(
                     $"Failed to open local achievements editor: {ex.Message}",
                     "Playnite Achievements");

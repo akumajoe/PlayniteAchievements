@@ -111,7 +111,7 @@
                                   VerticalAlignment="Center"
                                   MinWidth="160">
                             <ComboBoxItem Content="{DynamicResource LOCPlayAch_Settings_RaRarityStats_Casual}" Tag="casual"/>
-                            <ComboBoxItem Content="{DynamicResource LOCPlayAch_Settings_RaRarityStats_Hardcore}" Tag="hardcore"/>
+                            <ComboBoxItem Content="{DynamicResource LOCPlayAch_ManageAchievements_Category_Type_Hardcore}" Tag="hardcore"/>
                         </ComboBox>
                     </controls:SettingRow>
 
@@ -201,7 +201,8 @@
                                              VerticalAlignment="Center"/>
 
                                     <Button Grid.Row="1" Grid.Column="1"
-                                            Content="{DynamicResource LOCPlayAch_Button_Browse}"
+                                            Content="..."
+                                            ToolTip="{DynamicResource LOCPlayAch_Button_Browse}"
                                             Click="EmulatorLogBrowse_Click"
                                             VerticalAlignment="Center"
                                             Margin="0,4,0,0"

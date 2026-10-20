@@ -65,12 +65,9 @@ namespace PlayniteAchievements.Tests.ViewModels
                 "stale too. That reload used to happen as a side effect of the selection restore " +
                 "re-assigning a new instance; it now has to be requested.");
 
-            // Anchored on the flag-set that ends the full-snapshot apply path, up to the member
-            // declared right after it: the call this pins used to sit after a display sync in
-            // that tail, which a later refactor moved out of the method.
             var applySnapshotTail = Between(
                 source,
-                "_selectedGameReloadRequested = SelectedGame?.PlayniteGameId != null;",
+                "private void ApplySnapshot(",
                 "private bool IsTransientRebuildSnapshot");
             StringAssert.Contains(
                 applySnapshotTail,

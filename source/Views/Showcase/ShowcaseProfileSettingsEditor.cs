@@ -7,7 +7,9 @@ using System.Windows.Input;
 using Microsoft.Win32;
 using PlayniteAchievements.Common;
 using PlayniteAchievements.Models.Settings;
+using PlayniteAchievements.Services.Images;
 using PlayniteAchievements.Services.Showcase;
+using PlayniteAchievements.Views.Helpers;
 using static PlayniteAchievements.Views.Showcase.ShowcaseUiText;
 
 namespace PlayniteAchievements.Views.Showcase
@@ -21,7 +23,7 @@ namespace PlayniteAchievements.Views.Showcase
     /// </summary>
     internal sealed class ShowcaseProfileSettingsEditor : UserControl
     {
-        private const string ImagePatterns = "*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp";
+        private static string ImagePatterns => string.Join(";", ImageFormats.Selectable.Select(extension => "*" + extension));
 
         private readonly ShowcaseProfileSettings _profile;
         private readonly Action _onChanged;
@@ -77,14 +79,16 @@ namespace PlayniteAchievements.Views.Showcase
                 _onChanged);
             AddImagePicker(
                 panel,
-                Localize("LOCPlayAch_Showcase_ProfileAvatar"),
+                Localize("LOCPlayAch_Column_Avatar"),
                 () => _profile.AvatarPath,
-                value => _profile.AvatarPath = value);
+                value => _profile.AvatarPath = value,
+                _onChanged);
             AddImagePicker(
                 panel,
                 Localize("LOCPlayAch_Showcase_ProfileBackground"),
                 () => _profile.BackgroundPath,
-                value => _profile.BackgroundPath = value);
+                value => _profile.BackgroundPath = value,
+                _onChanged);
             BuildProfileLinks(panel);
             return panel;
         }
@@ -156,7 +160,7 @@ namespace PlayniteAchievements.Views.Showcase
 
             var add = new Button
             {
-                Content = Localize("LOCPlayAch_Button_Add"),
+                Content = Localize("LOCAddTitle"),
                 MinWidth = 82
             };
             add.SetResourceReference(MarginProperty, "PlayAch.Thickness.Left.Sm");
@@ -254,7 +258,7 @@ namespace PlayniteAchievements.Views.Showcase
                 AddLinkButton(row, 3, "\uEA5B", "LOCPlayAch_Showcase_MoveLater", index < _links.Count - 1,
                     () => MoveLink(index, 1));
 
-                AddLinkButton(row, 4, "\uEE09", "LOCPlayAch_Button_Remove", true, () =>
+                AddLinkButton(row, 4, "\uEE09", "LOCRemoveLabel", true, () =>
                 {
                     _links.RemoveAt(index);
                     CommitLinks();
@@ -324,15 +328,16 @@ namespace PlayniteAchievements.Views.Showcase
             RenderLinks();
         }
 
-        // A picked file is copied into the showcase image store right away (content-addressed,
+        // A picked or pasted file is copied into the showcase image store right away (content-addressed,
         // so the stored name never changes meaning and needs no cache eviction). A copy that
         // fails keeps the previous image rather than dropping it.
-        private void AddImagePicker(Panel panel, string label, Func<string> read, Action<string> apply)
+        internal static void AddImagePicker(Panel panel, string label, Func<string> read, Action<string> apply, Action onChanged)
         {
             var row = new Grid();
             row.SetResourceReference(MarginProperty, "PlayAch.Thickness.Bottom.Md");
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var labelBlock = CreateLabel(label);
@@ -348,10 +353,26 @@ namespace PlayniteAchievements.Views.Showcase
             };
             Grid.SetColumn(box, 1);
             row.Children.Add(box);
+
+            void Import(string path)
+            {
+                var store = PlayniteAchievementsPlugin.Instance?.ShowcaseImageStore;
+                var imported = store?.Import(path);
+                if (string.IsNullOrWhiteSpace(imported) ||
+                    string.Equals(imported, read(), StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                apply(imported);
+                box.Text = imported;
+                onChanged?.Invoke();
+            }
+
             var browse = new Button
             {
-                Content = Localize("LOCPlayAch_Button_Browse"),
-                MinWidth = 82
+                Content = "...",
+                ToolTip = Localize("LOCPlayAch_Button_Browse")
             };
             browse.SetResourceReference(MarginProperty, "PlayAch.Thickness.Left.Sm");
             browse.Click += (_, __) =>
@@ -362,28 +383,32 @@ namespace PlayniteAchievements.Views.Showcase
                     CheckFileExists = true,
                     Multiselect = false
                 };
-                if (dialog.ShowDialog() != true)
+                if (dialog.ShowDialog() == true)
                 {
-                    return;
+                    Import(dialog.FileName);
                 }
-
-                var store = PlayniteAchievementsPlugin.Instance?.ShowcaseImageStore;
-                var imported = store?.Import(dialog.FileName);
-                if (string.IsNullOrWhiteSpace(imported) ||
-                    string.Equals(imported, read(), StringComparison.OrdinalIgnoreCase))
-                {
-                    return;
-                }
-
-                apply(imported);
-                box.Text = imported;
-                _onChanged?.Invoke();
             };
-            Grid.SetColumn(browse, 2);
+            Grid.SetColumn(browse, 3);
             row.Children.Add(browse);
+            var paste = new Button
+            {
+                Content = Localize("LOCPlayAch_Button_Paste"),
+                ToolTip = Localize("LOCPlayAch_Button_Paste")
+            };
+            paste.SetResourceReference(ContentControl.ContentTemplateProperty, "PlayAch.ButtonContent.Paste");
+            paste.SetResourceReference(MarginProperty, "PlayAch.Thickness.Left.Sm");
+            paste.Click += (_, __) =>
+            {
+                if (FilePickTarget.TryPasteLocalImageFile(out var path))
+                {
+                    Import(path);
+                }
+            };
+            Grid.SetColumn(paste, 2);
+            row.Children.Add(paste);
             var clear = new Button
             {
-                Content = Localize("LOCPlayAch_Button_Clear"),
+                Content = Localize("LOCClearLabel"),
                 MinWidth = 72
             };
             clear.SetResourceReference(MarginProperty, "PlayAch.Thickness.Left.Sm");
@@ -396,9 +421,9 @@ namespace PlayniteAchievements.Views.Showcase
 
                 apply(null);
                 box.Text = string.Empty;
-                _onChanged?.Invoke();
+                onChanged?.Invoke();
             };
-            Grid.SetColumn(clear, 3);
+            Grid.SetColumn(clear, 4);
             row.Children.Add(clear);
             panel.Children.Add(row);
         }

@@ -113,6 +113,31 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 
 ## Next release - TBD
 
+- v4.1.1 merge
+- Fixed the missing key for the `Cancel` button for the `Logs` buttons
+- Fixed the theme migration for `Solaris` theme
+- Fixed the missing label for the `Revert` button under the `Theme Migration` tab
+- Fixed the `Revert` button not finding any backups to revert under the `Theme Migration` tab
+- Fixed blank button labels across `Local` settings, `Local Overrides`, `Custom Schema`, `import dialogs`, and `notification` settings.
+- Restored the `Edit Local Achievements` action for `Local` provider games.
+- Fixed the installation folder disappearing from the multiple-folders dropdown after applying a folder override.
+- Standardized folder and source-path displays to use the casing stored on disk, with uppercase drive letters.
+- Added detection for nested `steam_settings` folders beneath the game’s installation directory, including their `settings` and `stats` subfolders. The search respects excluded paths and skips directory links.
+- Updated the `Automatic folders` list with missing scan locations and an explanation of nested `steam_settings` detection.
+- Restored the upstream themes tabs to the original state
+- Moved all the settings related to this fork to the `Santodan-Fork` tab so it is more clear to differentiate the upstream from mine
+- Added wildcards to both `Custom Folders` and for `Local Save Folder Override`
+- Changed the entries for my fork related log to be called as `[PlayniteAchievementsPlugin-Santodan]`
+- Fixed the progress detecting for achievements with progress
+- Added progress related wildcards to the custom notification - `<progress>`, `<progressCurrent>`, `<progressMax>`, and `<progressPercent>`
+
+## 2026-10-18 - v4.1.0.1
+
+- v4.1.0 merge
+- Fixed `PS5-Experience` theme not showing the trophy for 100% games
+
+## 2026-10-14 - v4.0.1.2
+
 - `PS5-Experience` theme now available in the `Theme Migration`
 - `Automatically migrate new themes` will respect the selected settings
 - Clicking the `New Theme Migrated` popup will restart playnite automatically
@@ -157,6 +182,9 @@ The entries below are fork-side changes, grouped by date. When a date includes a
   - It will respect all the default nd custom folders, for all acceptable files
   - The setting for the interval for this check is under `Local` platform in the top of the `Local Achievements Folders and Settings` (default is 5 seconds)
 
+## Old Changelogs
+<details>
+
 ## 2026-09-14 - v3.2.1.1
 
 - v3.2.1 merge
@@ -167,9 +195,6 @@ The entries below are fork-side changes, grouped by date. When a date includes a
 - Fixed not taking the screenshot when achievements were unlocked
 - Fixed video recording not working with the custom notification style
 - Changed the `[InGameMonitor] Configured...` logs to only when there are changes or every 5 minutes
-
-## Old Changelogs
-<details>
 
 ## 2026-09-09 - v3.2.0.1
 
